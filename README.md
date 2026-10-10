@@ -1,5 +1,7 @@
 # ViralReels — AI Trending Reels Generator for SMEs
 
+> Dormathon_Ctrl-C-V_77 · Dormathon let's go
+
 Help small and medium enterprises (SMEs) get exposure by finding trending short-form video patterns on YouTube, Instagram and TikTok, then adapting them into ready-to-post vertical reels.
 
 ## Features
