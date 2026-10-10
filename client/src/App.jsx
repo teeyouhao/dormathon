@@ -40,6 +40,7 @@ export default function App() {
   }
 
   const handleReelSelect = (reelOrProject) => {
+    document.querySelectorAll('video').forEach(video => video.pause())
     setSelectedReel(reelOrProject)
     setShowEditor(true)
     setSidebarOpen(false)

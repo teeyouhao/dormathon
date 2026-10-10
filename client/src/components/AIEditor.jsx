@@ -7,6 +7,10 @@ import {
   Clock, Save
 } from 'lucide-react'
 import { generateReelConcept, submitVideoEdit, saveProject, exportReel, createRemixPlan } from '../services/api'
+import { isReferenceReel, referenceParts, buildReferenceClips, buildPartAsset, partUploadClips, validatePartFile, assemblyPlan } from '../data/referenceReel'
+import { readReferenceDraft, writeReferenceDraft, deleteReferenceDraft, readVideoDuration } from '../services/referenceDrafts'
+import ClipVideo from './ClipVideo'
+import PartUploadPanel from './PartUploadPanel'
 
 const editorModes = [
   { id: 'edit', label: 'Edit', icon: Scissors },
@@ -209,6 +213,7 @@ const createClipGuidance = ({ source, durationSec, reel, fileName, startSec, end
 }
 
 const buildOriginalClips = (reel) => {
+  if (isReferenceReel(reel)) return buildReferenceClips(reel)
   const totalSeconds = parseDurationToSeconds(reel?.duration)
   const chunks = splitDurationIntoClips(totalSeconds)
   let cursor = 0
@@ -315,6 +320,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   const sourceProject = selectedReel?.sourceVideo ? selectedReel : null
   const sourceReel = sourceProject?.sourceVideo || selectedReel
   const reel = sourceReel
+  const isThreePart = isReferenceReel(reel)
   const initialOriginalClips = sourceProject?.edits?.originalClips || buildOriginalClips(sourceReel)
 
   const [mode, setMode] = useState('edit')
@@ -322,7 +328,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   const [isPlaying, setIsPlaying] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [originalClips, setOriginalClips] = useState(initialOriginalClips)
-  const [uploadedAssets, setUploadedAssets] = useState(sourceProject?.edits?.uploadedAssets || [])
+  const [uploadedAssets, setUploadedAssets] = useState(isThreePart ? [] : sourceProject?.edits?.uploadedAssets || [])
   const [selectedClipId, setSelectedClipId] = useState(sourceProject?.edits?.selectedClipId || initialOriginalClips[0]?.id || null)
   const [textOverlays, setTextOverlays] = useState(sourceProject?.edits?.textOverlays || [])
   const [selectedMusic, setSelectedMusic] = useState(sourceProject?.edits?.selectedMusic || null)
@@ -338,17 +344,66 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   const [future, setFuture] = useState([])
   const timelineRef = useRef(null)
   const fileInputRef = useRef(null)
-  const previewVideoRef = useRef(null)
+  const partInputRef = useRef(null)
+  const uploadTarget = useRef(null)
+  const ownedUrls = useRef(new Set())
+  const mounted = useRef(true)
+  const operationBusy = useRef(false)
+  const draftStorageId = useRef(sourceProject?.edits?.referenceDraftId || null)
+  const projectId = useRef(sourceProject?.id || (isThreePart ? `remake-${crypto.randomUUID()}` : undefined))
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [restoring, setRestoring] = useState(Boolean(isThreePart && sourceProject))
+  const [saving, setSaving] = useState(false)
+  const [clipError, setClipError] = useState('')
+  const [sequenceMode, setSequenceMode] = useState(false)
+  const [previewVersion, setPreviewVersion] = useState(0)
+  const liveState = useRef(null)
+  liveState.current = { originalClips, uploadedAssets, selectedClipId, textOverlays, selectedMusic, selectedFilter, stickers, selectedEffect, volume }
+
+  useEffect(() => {
+    mounted.current = true
+    let cancelled = false
+    if (isThreePart && sourceProject) {
+      const metadata = sourceProject.edits?.uploadedAssets || []
+      const restore = async () => {
+        try {
+          const files = draftStorageId.current ? await readReferenceDraft(draftStorageId.current) : {}
+          if (cancelled) return
+          const restored = metadata.filter(asset => files[asset.partId]).map(asset => {
+            const previewUrl = URL.createObjectURL(files[asset.partId])
+            ownedUrls.current.add(previewUrl)
+            return { ...asset, file: files[asset.partId], previewUrl }
+          })
+          setUploadedAssets(restored)
+          if (restored.length < metadata.length) setClipError('Some saved footage is unavailable in this browser. Please upload those parts again.')
+        } catch (error) { if (!cancelled) setClipError(error.message) }
+        finally { if (!cancelled) setRestoring(false) }
+      }
+      restore()
+    }
+    return () => {
+      cancelled = true
+      mounted.current = false
+      for (const url of ownedUrls.current) URL.revokeObjectURL(url)
+      ownedUrls.current.clear()
+    }
+  }, [])
 
   if (!reel) return null
 
   const currentFilter = filterPresets.find(f => f.id === selectedFilter)
   const originalDurationSec = Math.max(1, parseDurationToSeconds(reel.duration))
-  const uploadedTrackClips = flattenUploadedTrackClips(uploadedAssets)
-  const totalUploadedDuration = Math.max(1, uploadedAssets.reduce((sum, asset) => sum + (asset.durationSec || 0), 0))
+  const uploadedTrackClips = isThreePart ? partUploadClips(uploadedAssets) : flattenUploadedTrackClips(uploadedAssets)
+  const totalUploadedDuration = isThreePart ? 8 : Math.max(1, uploadedAssets.reduce((sum, asset) => sum + (asset.durationSec || 0), 0))
   const allClips = [...originalClips, ...uploadedTrackClips]
   const selectedClip = allClips.find(clip => clip.id === selectedClipId) || originalClips[0] || null
   const activeTimelineDuration = selectedClip?.source === 'upload' ? totalUploadedDuration : originalDurationSec
+  const selectedPart = isThreePart ? referenceParts.find(part => part.id === selectedClip?.partId) : null
+  const selectedAsset = uploadedAssets.find(asset => asset.partId === selectedPart?.id)
+  const readyParts = 1 + referenceParts.filter(part => !part.locked && uploadedAssets.some(asset => asset.partId === part.id && asset.previewUrl)).length
+  const previewUrl = selectedClip?.source === 'upload' ? selectedClip.previewUrl : reel.videoUrl
+  const previewStart = selectedClip?.localStartSec ?? selectedClip?.startSec ?? 0
+  const previewEnd = selectedClip?.localEndSec ?? selectedClip?.endSec
   const effectClass = selectedEffect === 'Zoom In'
     ? 'scale-110'
     : selectedEffect === 'Zoom Out'
@@ -365,13 +420,13 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   }, [selectedClipId, originalClips])
 
   useEffect(() => {
-    if (selectedClipId && !allClips.find(clip => clip.id === selectedClipId)) {
+    if (!restoring && selectedClipId && !allClips.find(clip => clip.id === selectedClipId)) {
       setSelectedClipId(originalClips[0]?.id || null)
     }
   }, [selectedClipId, allClips, originalClips])
 
   useEffect(() => {
-    if (!isPlaying || !selectedClip) return undefined
+    if (!isPlaying || !selectedClip || previewUrl) return undefined
 
     const clipStart = selectedClip.startPct ?? 0
     const clipEnd = selectedClip.endPct ?? 100
@@ -385,45 +440,43 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     return () => clearInterval(interval)
   }, [isPlaying, selectedClip?.id, selectedClip?.startPct, selectedClip?.endPct])
 
-  useEffect(() => {
-    if (!selectedClip || selectedClip.source !== 'upload' || !previewVideoRef.current) return undefined
+  const handlePreviewProgress = time => {
+    if (!Number.isFinite(time) || !selectedClip) return
+    const offset = Math.max(0, time - previewStart)
+    setPlayhead(Math.min(selectedClip.endPct, selectedClip.startPct + offset / activeTimelineDuration * 100))
+  }
 
-    const video = previewVideoRef.current
-    const syncVideoPosition = () => {
-      try {
-        video.currentTime = selectedClip.localStartSec || 0
-      } catch {
-        // Ignore browser seek errors for partially loaded local files
-      }
+  const handlePreviewEnd = () => {
+    if (sequenceMode && selectedPart && selectedPart.number < 3) {
+      const nextPart = referenceParts[selectedPart.number]
+      const next = uploadedTrackClips.find(clip => clip.partId === nextPart.id)
+      if (next) { setSelectedClipId(next.id); setPlayhead(next.startPct); setIsPlaying(true); return }
     }
+    setIsPlaying(false)
+    setSequenceMode(false)
+  }
 
-    if (video.readyState >= 1) {
-      syncVideoPosition()
-    }
-
-    video.addEventListener('loadedmetadata', syncVideoPosition)
-    return () => video.removeEventListener('loadedmetadata', syncVideoPosition)
-  }, [selectedClipId, selectedClip?.source, selectedClip?.localStartSec, selectedClip?.previewUrl])
+  const previewSequence = () => {
+    if (readyParts !== 3) return
+    setPreviewVersion(version => version + 1)
+    setSelectedClipId(originalClips[0].id)
+    setPlayhead(0)
+    setSequenceMode(true)
+    setIsPlaying(true)
+  }
 
   const captureState = () => {
     setHistory(prev => [
       ...prev.slice(-19),
-      {
-        originalClips,
-        uploadedAssets,
-        selectedClipId,
-        textOverlays,
-        selectedMusic,
-        selectedFilter,
-        stickers,
-        selectedEffect,
-        volume,
-      }
+      { ...liveState.current }
     ])
     setFuture([])
   }
 
   const restoreState = (state) => {
+    setIsPlaying(false)
+    setSequenceMode(false)
+    setPreviewVersion(version => version + 1)
     setOriginalClips(state.originalClips || buildOriginalClips(reel))
     setUploadedAssets(state.uploadedAssets || [])
     setSelectedClipId(state.selectedClipId || state.originalClips?.[0]?.id || buildOriginalClips(reel)[0]?.id || null)
@@ -477,9 +530,58 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   }
 
   const handleClipSelect = (clip) => {
+    setSequenceMode(false)
+    setClipError('')
     setSelectedClipId(clip.id)
     setActiveTool('guidance')
     setPlayhead(clip.startPct ?? 0)
+    setIsPlaying(false)
+  }
+
+  const choosePartUpload = (part = selectedPart) => {
+    if (!part || part.locked || uploadBusy || restoring || saving) return
+    uploadTarget.current = part
+    partInputRef.current?.click()
+  }
+
+  const uploadPart = async (file, part) => {
+    if (!file || !part || part.locked || operationBusy.current || restoring || saving) return
+    const invalidType = validatePartFile(file, part.duration, part)
+    if (invalidType) { setClipError(invalidType); return }
+    operationBusy.current = true
+    setUploadBusy(true)
+    setClipError('')
+    const url = URL.createObjectURL(file)
+    ownedUrls.current.add(url)
+    try {
+      const duration = await readVideoDuration(url)
+      const error = validatePartFile(file, duration, part)
+      if (error) throw new Error(error)
+      if (!mounted.current) return
+      captureState()
+      const asset = buildPartAsset(file, url, duration, part)
+      const nextAssets = [...liveState.current.uploadedAssets.filter(item => item.partId !== part.id), asset]
+      setUploadedAssets(nextAssets)
+      handleClipSelect(partUploadClips(nextAssets).find(clip => clip.partId === part.id))
+      setSaveStatus('Unsaved footage. Save to keep it in this browser.')
+    } catch (error) {
+      URL.revokeObjectURL(url)
+      ownedUrls.current.delete(url)
+      if (mounted.current) setClipError(error.message)
+    } finally {
+      operationBusy.current = false
+      if (mounted.current) setUploadBusy(false)
+    }
+  }
+
+  const trimSelectedPart = value => {
+    if (!selectedAsset) return
+    const trimStart = Math.min(Math.max(0, Number(value)), selectedAsset.sourceDurationSec - selectedPart.duration)
+    setUploadedAssets(assets => assets.map(asset => asset.id === selectedAsset.id ? {
+      ...asset, trimStart, clips: asset.clips.map(clip => ({ ...clip, localStartSec: trimStart, localEndSec: trimStart + selectedPart.duration })),
+    } : asset))
+    setSelectedClipId(selectedAsset.clips[0].id)
+    setSequenceMode(false)
     setIsPlaying(false)
   }
 
@@ -600,6 +702,10 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   })
 
   const handleApplyEdits = async () => {
+    if (isThreePart) {
+      setEditResult({ success: false, message: 'Preview settings applied. Export prepares the 8-second assembly plan; MP4 rendering is not connected.' })
+      return
+    }
     setEditing(true)
     const res = await submitVideoEdit({
       videoId: reel.id,
@@ -636,22 +742,40 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     setEditing(false)
   }
 
-  const handleSaveProject = async () => {
+  const handleSaveProject = async (lastExport) => {
+    if (operationBusy.current || restoring || saving) return
+    setSaving(true)
     setSaveStatus('Saving...')
-    const project = {
-      id: sourceProject?.id,
-      title: reel.title,
-      thumbnail: reel.thumbnail,
-      platform: reel.platform,
-      sourceVideo: reel,
-      savedAt: Date.now(),
-      edits: currentEdits(),
-      editResult
-    }
-    const saved = await saveProject(project)
-    setSaveStatus('Saved to Projects')
-    onReelChange?.(saved)
-    setTimeout(() => setSaveStatus(''), 2000)
+    let nextStorageId
+    let committed = false
+    try {
+      const edits = currentEdits()
+      if (isThreePart) {
+        nextStorageId = `${projectId.current}:${crypto.randomUUID()}`
+        await writeReferenceDraft(nextStorageId, uploadedAssets)
+        edits.referenceDraftId = nextStorageId
+        edits.uploadedAssets = uploadedAssets.map(({ file, previewUrl, ...asset }) => ({
+          ...asset, clips: asset.clips.map(({ previewUrl, ...clip }) => clip),
+        }))
+      }
+      const saved = await saveProject({
+        id: projectId.current, title: reel.title, thumbnail: reel.thumbnail,
+        platform: reel.platform, sourceVideo: reel, savedAt: Date.now(), edits, editResult,
+        ...(lastExport && (lastExport.status || lastExport.exports) ? { lastExport } : {}),
+      })
+      committed = true
+      projectId.current = saved.id
+      if (nextStorageId) draftStorageId.current = nextStorageId
+      if (mounted.current) {
+        onReelChange?.(saved)
+        setSaveStatus(isThreePart ? 'Saved to Projects. Footage stays in this browser.' : 'Saved to Projects')
+      }
+      // Keep older file versions: online and fallback metadata may reference different saves.
+    } catch (error) {
+      if (nextStorageId && !committed) await deleteReferenceDraft(nextStorageId).catch(() => {})
+      if (mounted.current) setSaveStatus(error.message || 'Save failed. Keep this tab open and try again.')
+      throw error
+    } finally { if (mounted.current) setSaving(false) }
   }
 
   const formatTimelineTime = (pct) => formatSeconds((pct / 100) * activeTimelineDuration)
@@ -662,7 +786,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     : selectedClip?.label || 'Original Clip'
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#0a0a0f] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-[#0a0a0f] flex flex-col" role="dialog" aria-label="AI video editor">
       <div className="flex items-center justify-between px-4 py-3 bg-[#12121a] border-b border-white/5 flex-shrink-0">
         <div className="flex items-center gap-4">
           <button onClick={onClose} className="text-slate-400 hover:text-white transition flex items-center gap-1">
@@ -676,7 +800,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
               return (
                 <button
                   key={m.id}
-                  onClick={() => setMode(m.id)}
+                  onClick={() => { setIsPlaying(false); setSequenceMode(false); setMode(m.id) }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${mode === m.id ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   <Icon className="w-3.5 h-3.5" /> {m.label}
@@ -687,22 +811,24 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
         </div>
 
         <div className="flex items-center gap-2">
-          <button onClick={handleUndo} disabled={history.length === 0} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition disabled:opacity-30">
+          <button aria-label="Undo" onClick={handleUndo} disabled={history.length === 0 || uploadBusy || restoring || saving} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition disabled:opacity-30">
             <Undo2 className="w-4 h-4" />
           </button>
-          <button onClick={handleRedo} disabled={future.length === 0} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition disabled:opacity-30">
+          <button aria-label="Redo" onClick={handleRedo} disabled={future.length === 0 || uploadBusy || restoring || saving} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition disabled:opacity-30">
             <Redo2 className="w-4 h-4" />
           </button>
           <div className="h-6 w-px bg-white/10 mx-1" />
           {saveStatus && <span className="hidden sm:inline text-xs text-green-400">{saveStatus}</span>}
           <button
-            onClick={handleSaveProject}
+            onClick={() => handleSaveProject().catch(() => {})}
+            disabled={uploadBusy || restoring || saving}
             className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium transition flex items-center gap-1.5"
           >
             <Save className="w-3.5 h-3.5" /> Save
           </button>
           <button
-            onClick={() => setShowExport(true)}
+            onClick={() => { setIsPlaying(false); setShowExport(true) }}
+            disabled={uploadBusy || restoring || saving}
             className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-brand-600 to-purple-600 text-white text-xs font-semibold transition hover:opacity-90 flex items-center gap-1.5"
           >
             <Download className="w-3.5 h-3.5" /> Export
@@ -734,13 +860,13 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 flex items-center justify-center bg-black/40 p-4 min-h-0">
               <div className="relative aspect-[9/16] w-full max-w-sm max-h-full rounded-lg overflow-hidden shadow-2xl bg-black" style={{ maxHeight: 'calc(100vh - 320px)' }}>
-                {selectedClip?.source === 'upload' && selectedClip.previewUrl ? (
-                  <video
-                    ref={previewVideoRef}
-                    src={selectedClip.previewUrl}
-                    controls
-                    muted
-                    className={`h-full w-full object-cover ${effectClass}`}
+                {previewUrl ? (
+                  <ClipVideo
+                    key={`${selectedClip.id}-${previewStart}-${previewVersion}`}
+                    src={previewUrl} poster={selectedClip.source === 'original' ? reel.thumbnail : undefined}
+                    start={previewStart} end={previewEnd} playing={isPlaying} volume={volume}
+                    onPlayingChange={setIsPlaying} onProgress={handlePreviewProgress} onEnded={handlePreviewEnd}
+                    className={`h-full w-full object-contain ${effectClass}`}
                     style={currentFilter?.style}
                   />
                 ) : (
@@ -785,46 +911,50 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                   )
                 })}
 
-                <div className="absolute left-2 top-2 flex items-center gap-2">
+                <div className="absolute left-2 top-2 flex items-center gap-2 pointer-events-none">
                   <span className={`platform-badge platform-${reel.platform}`}>{selectedClip?.source === 'upload' ? 'Uploaded clip' : reel.platform === 'youtube' ? 'YouTube Shorts' : reel.platform}</span>
                   {selectedClip && <span className="px-2 py-1 rounded-full bg-black/60 text-[10px] text-white">{selectedClip.label}</span>}
                 </div>
 
-                <div className="absolute left-3 right-3 bottom-3 rounded-xl bg-black/60 border border-white/10 p-3 text-white backdrop-blur-sm">
+                {!previewUrl && <div className="absolute left-3 right-3 bottom-3 rounded-xl bg-black/60 border border-white/10 p-3 text-white backdrop-blur-sm">
                   <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.2em] text-slate-300">
                     <span>{selectedClip?.source === 'upload' ? 'Uploaded clip' : 'Original reference'}</span>
                     <span>{selectedClip ? `${formatSeconds(selectedClip.localStartSec ?? selectedClip.startSec)}-${formatSeconds(selectedClip.localEndSec ?? selectedClip.endSec)}` : '0:00-0:00'}</span>
                   </div>
                   <p className="mt-2 text-sm font-semibold">{previewLabel}</p>
                   <p className="mt-1 text-xs text-slate-300 line-clamp-2">{selectedClipGuidance?.description || 'Select a clip from the timeline to preview it here.'}</p>
-                </div>
+                </div>}
               </div>
             </div>
 
             <div className="flex items-center justify-center gap-4 py-2 bg-[#12121a] border-t border-white/5">
               <span className="text-xs text-slate-400 font-mono">{formatTimelineTime(playhead)}</span>
               <button
+                aria-label={isPlaying ? 'Pause clip' : 'Play clip'}
                 onClick={togglePlay}
                 className="w-10 h-10 rounded-full bg-brand-600 hover:bg-brand-700 flex items-center justify-center transition"
               >
                 {isPlaying ? <Pause className="w-4 h-4 text-white" /> : <Play className="w-4 h-4 text-white ml-0.5" fill="white" />}
               </button>
               <span className="text-xs text-slate-400 font-mono">{formatTimelineTime(selectedClip?.endPct ?? 100)}</span>
+              {isThreePart && <button onClick={previewSequence} disabled={readyParts !== 3 || uploadBusy || restoring} className="rounded-lg bg-white/5 px-3 py-2 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-30">{sequenceMode ? 'Restart sequence' : 'Preview all 3 parts'}</button>}
             </div>
 
             <div className="bg-[#0e0e14] border-t border-white/5 p-3 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-medium text-white">Clip Timeline</p>
-                  <p className="text-[10px] text-slate-500">First track is the reference video. Add uploaded clips one by one and each clip is auto-split into short beats.</p>
+                  <p className="text-[10px] text-slate-500">{isThreePart ? `${readyParts}/3 parts ready · Keep the intro, replace Parts 2 and 3. Reference 4–5s is skipped; final length is 8s.` : 'First track is the reference video. Add uploaded clips one by one and each clip is auto-split into short beats.'}</p>
                 </div>
                 <>
                   <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleUploadClips} />
+                  <input ref={partInputRef} type="file" accept="video/*,.mp4,.mov,.webm,.m4v" className="hidden" aria-label="Upload selected part video" onChange={event => { const file = event.target.files[0]; event.target.value = ''; uploadPart(file, uploadTarget.current) }} />
                   <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-1.5"
+                    onClick={() => isThreePart ? choosePartUpload() : fileInputRef.current?.click()}
+                    disabled={isThreePart && (!selectedPart || selectedPart.locked || uploadBusy || restoring || saving)}
+                    className="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
                   >
-                    <Upload className="w-3.5 h-3.5" /> Upload clip
+                    <Upload className="w-3.5 h-3.5" /> {isThreePart ? selectedPart?.locked ? 'Intro included' : `Upload Part ${selectedPart?.number}` : 'Upload clip'}
                   </button>
                 </>
               </div>
@@ -840,6 +970,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                     {originalClips.map(clip => (
                       <button
                         key={clip.id}
+                        aria-label={`Original ${clip.label}`}
                         onClick={() => handleClipSelect(clip)}
                         className={`absolute inset-y-1 rounded-md overflow-hidden border text-left ${selectedClip?.id === clip.id ? 'border-brand-400 ring-1 ring-brand-400/60' : 'border-white/10 hover:border-white/30'}`}
                         style={{ left: `${clip.startPct}%`, width: `${clip.endPct - clip.startPct}%` }}
@@ -857,7 +988,17 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                 <div className="flex items-start gap-2">
                   <span className="text-[9px] text-slate-500 w-14 text-right pt-2">Uploads</span>
                   <div className="flex-1 min-h-12 bg-white/5 rounded relative overflow-hidden border border-white/5 px-1 py-1">
-                    {uploadedTrackClips.length > 0 ? (
+                    {isThreePart ? referenceParts.map(part => {
+                      const clip = uploadedTrackClips.find(item => item.partId === part.id)
+                      const original = originalClips.find(item => item.partId === part.id)
+                      return <button key={part.id} aria-label={`Uploads Part ${part.number}${part.locked ? ' included' : clip ? ' ready' : ' empty'}`}
+                        onClick={() => handleClipSelect(clip || original)}
+                        className={`absolute inset-y-1 rounded-md px-2 py-1 border text-left ${clip ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-dashed border-white/20 bg-white/5'} ${selectedClip?.id === clip?.id ? 'ring-1 ring-emerald-400' : ''}`}
+                        style={{ left: `${part.outputStart / 8 * 100}%`, width: `${part.duration / 8 * 100}%` }}>
+                        <span className="block text-[10px] font-semibold text-white truncate">Part {part.number} · {part.duration}s</span>
+                        <span className="block text-[9px] text-slate-400 truncate">{part.locked ? 'Original intro included' : clip ? clip.fileName : 'Select to upload'}</span>
+                      </button>
+                    }) : uploadedTrackClips.length > 0 ? (
                       uploadedTrackClips.map(clip => (
                         <button
                           key={clip.id}
@@ -917,7 +1058,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
 
                 <div
                   className="absolute top-0 bottom-0 w-0.5 bg-white pointer-events-none"
-                  style={{ left: `calc(${playhead}% + 3.5rem)`, height: '100%' }}
+                  style={{ left: `calc(4rem + (100% - 4rem) * ${playhead / 100})`, height: '100%' }}
                 >
                   <div className="absolute -top-1 -left-1.5 w-3 h-3 rounded-full bg-white" />
                 </div>
@@ -930,13 +1071,22 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
               <div className="p-4 space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-sm font-semibold text-white">AI Clip Guidelines</h3>
-                    <p className="text-[10px] text-slate-500">Each reference beat and uploaded beat gets its own AI analysis, video role, and shooting notes.</p>
+                    <h3 className="text-sm font-semibold text-white">{isThreePart ? 'Clip Guidelines' : 'AI Clip Guidelines'}</h3>
+                    <p className="text-[10px] text-slate-500">{isThreePart ? 'Follow the reference using your own people and food.' : 'Each reference beat and uploaded beat gets its own AI analysis, video role, and shooting notes.'}</p>
                   </div>
-                  <button onClick={() => fileInputRef.current?.click()} className="px-2.5 py-1.5 rounded bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1">
+                  {!isThreePart && <button onClick={() => fileInputRef.current?.click()} className="px-2.5 py-1.5 rounded bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1">
                     <Upload className="w-3 h-3" /> Add clip
-                  </button>
+                  </button>}
                 </div>
+
+                {restoring && <p role="status" className="text-xs text-slate-400">Restoring saved footage…</p>}
+                {uploadBusy && <p role="status" className="text-xs text-slate-400">Reading video…</p>}
+                {clipError && <p role="alert" className="text-xs text-amber-400">{clipError}</p>}
+                {isThreePart && <PartUploadPanel part={selectedPart} asset={selectedAsset} busy={uploadBusy || restoring || saving}
+                  onUpload={() => choosePartUpload()} onDrop={file => uploadPart(file, selectedPart)}
+                  onReference={() => handleClipSelect(originalClips.find(clip => clip.partId === selectedPart.id))}
+                  onMine={() => handleClipSelect(uploadedTrackClips.find(clip => clip.partId === selectedPart.id))}
+                  onTrim={trimSelectedPart} onTrimStart={captureState} />}
 
                 {selectedClip ? (
                   <>
@@ -955,7 +1105,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
 
                     <div className="rounded-xl border border-brand-500/20 bg-brand-500/10 p-3 space-y-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] uppercase tracking-[0.2em] text-brand-200">AI analysis</span>
+                        <span className="text-[10px] uppercase tracking-[0.2em] text-brand-200">{isThreePart ? 'Shot guide' : 'AI analysis'}</span>
                         <span className="text-[10px] text-brand-100">{selectedClipGuidance?.title}</span>
                       </div>
                       <p className="text-xs text-slate-200">{selectedClipGuidance?.analysis}</p>
@@ -1024,7 +1174,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                               <p className="text-xs text-white truncate">{asset.name}</p>
                               <p className="text-[10px] text-slate-500">{asset.durationSec}s · {asset.clips?.length || 0} clips</p>
                             </div>
-                            <button onClick={() => handleRemoveUploadedAsset(asset.id)} className="text-red-400 hover:text-red-300">
+                            <button aria-label={`Remove ${asset.name}`} disabled={uploadBusy || restoring || saving} onClick={() => handleRemoveUploadedAsset(asset.id)} className="text-red-400 hover:text-red-300">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
@@ -1191,23 +1341,11 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
       )}
 
       {mode === 'remix' && (
-        <RemixMode brandInfo={brandInfo} reel={reel} onSavePlan={handleSaveProject} />
+        <RemixMode brandInfo={brandInfo} reel={reel} onSavePlan={() => handleSaveProject().catch(() => {})} />
       )}
 
       {showExport && (
-        <ExportModal reel={reel} onClose={() => setShowExport(false)} edits={currentEdits()} onSavedExport={async (lastExport) => {
-          const saved = await saveProject({
-            id: sourceProject?.id,
-            title: reel.title,
-            thumbnail: reel.thumbnail,
-            platform: reel.platform,
-            sourceVideo: reel,
-            savedAt: Date.now(),
-            edits: currentEdits(),
-            lastExport
-          })
-          onReelChange?.(saved)
-        }} />
+        <ExportModal reel={reel} onClose={() => setShowExport(false)} edits={currentEdits()} onSavedExport={handleSaveProject} />
       )}
     </div>
   )
@@ -1416,6 +1554,9 @@ function ExportModal({ reel, onClose, edits, onSavedExport }) {
   const [exporting, setExporting] = useState(false)
   const [done, setDone] = useState(false)
   const [exportResult, setExportResult] = useState(null)
+  const [exportError, setExportError] = useState('')
+  const threePart = isReferenceReel(reel)
+  const plan = threePart ? assemblyPlan(edits.uploadedAssets || [], edits, selectedPlatforms) : null
 
   const platforms = [
     { id: 'youtube', name: 'YouTube Shorts', res: '1080x1920' },
@@ -1428,23 +1569,38 @@ function ExportModal({ reel, onClose, edits, onSavedExport }) {
   }
 
   const handleExport = async () => {
+    if (threePart && !plan.ready) return
     setExporting(true)
-    const result = await exportReel({ videoId: reel.id, platforms: selectedPlatforms, editConfig: edits })
-    setExportResult(result)
-    await onSavedExport?.(result)
-    setExporting(false)
-    setDone(true)
+    setExportError('')
+    try {
+      const result = threePart ? { status: 'assembly-plan-only', plan } : await exportReel({ videoId: reel.id, platforms: selectedPlatforms, editConfig: edits })
+      if (result.success === false) throw new Error(result.message || 'Export failed. Please try again.')
+      await onSavedExport?.(result)
+      setExportResult(result)
+      setDone(true)
+    } catch (error) { setExportError(error.message || 'Could not save the export. Please try again.') }
+    finally { setExporting(false) }
+  }
+
+  const downloadPlan = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(exportResult.plan, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'on-the-go-delivery-plan.json'
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={onClose}>
+    <div role="dialog" aria-label="Export reel" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={onClose}>
       <div className="glass rounded-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
         {done ? (
           <div className="text-center">
             <Check className="w-16 h-16 text-green-400 mx-auto mb-3" />
-            <h3 className="text-lg font-bold text-white mb-1">Export Complete!</h3>
-            <p className="text-sm text-slate-400 mb-4">Your reel has been processed for {selectedPlatforms.length} platform(s)</p>
-            {(exportResult?.exports || selectedPlatforms.map(p => ({ platform: p, status: 'planned' }))).map(item => (
+            <h3 className="text-lg font-bold text-white mb-1">{threePart ? 'Assembly plan ready' : 'Export Complete!'}</h3>
+            <p className="text-sm text-slate-400 mb-4">{threePart ? 'Original intro + your delivery clip + your chef reveal. This is a plan, not a rendered MP4.' : `Your reel has been processed for ${selectedPlatforms.length} platform(s)`}</p>
+            {threePart && <button onClick={downloadPlan} className="w-full py-3 rounded-lg bg-brand-600 text-white text-sm">Download assembly plan (.json)</button>}
+            {!threePart && (exportResult?.exports || selectedPlatforms.map(p => ({ platform: p, status: 'planned' }))).map(item => (
               <div key={item.platform} className="flex items-center justify-between p-2 rounded-lg bg-white/5 mb-1">
                 <span className="text-sm text-white capitalize">{item.platform}</span>
                 {item.downloadUrl ? (
@@ -1460,6 +1616,12 @@ function ExportModal({ reel, onClose, edits, onSavedExport }) {
           <>
             <h3 className="text-lg font-bold text-white mb-4">Export Reel</h3>
             <p className="text-xs text-slate-400 mb-4">Select target platforms (9:16 vertical format)</p>
+            {threePart && <div className="rounded-lg bg-white/5 p-3 mb-4 text-xs text-slate-300 space-y-2">
+              {referenceParts.map(part => <p key={part.id}>Part {part.number} · {part.duration}s · {part.locked ? 'Original meme' : edits.uploadedAssets.find(asset => asset.partId === part.id)?.name || 'Upload needed'}</p>)}
+              <p className="text-slate-400">8-second sequence. Export saves a JSON assembly plan; MP4 rendering is not connected. Footage stays in this browser. Use reference material only with permission.</p>
+              {!plan.ready && <p className="text-amber-400">Add your Part 2 and Part 3 clips to continue.</p>}
+            </div>}
+            {exportError && <p role="alert" className="text-xs text-amber-400 mb-3">{exportError}</p>}
             <div className="space-y-2 mb-4">
               {platforms.map(p => (
                 <label key={p.id} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 cursor-pointer hover:bg-white/10">
@@ -1483,9 +1645,9 @@ function ExportModal({ reel, onClose, edits, onSavedExport }) {
             </div>
             <div className="flex gap-2">
               <button onClick={onClose} className="flex-1 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-sm font-medium">Cancel</button>
-              <button onClick={handleExport} disabled={exporting || selectedPlatforms.length === 0} className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-brand-600 to-purple-600 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
+              <button onClick={handleExport} disabled={exporting || selectedPlatforms.length === 0 || (threePart && !plan.ready)} className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-brand-600 to-purple-600 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
                 {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                {exporting ? 'Exporting...' : 'Export'}
+                {exporting ? 'Exporting...' : threePart ? 'Prepare export plan' : 'Export'}
               </button>
             </div>
           </>

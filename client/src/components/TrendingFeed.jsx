@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Flame, Search, RefreshCw, Play, X, Sparkles, MapPin, Calendar, Clock, ExternalLink } from 'lucide-react'
 import { fetchTrending } from '../services/api'
 import { platformInfo, industryCategories, industryAliases, southeastAsiaCountries } from '../data/mockData'
+import { pinReferenceReel } from '../data/referenceReel'
 import ReelCard from './ReelCard'
 
 const platforms = [
@@ -100,6 +101,10 @@ export default function TrendingFeed({ onSelectReel }) {
     }
     return (a.trendingRank || 999) - (b.trendingRank || 999)
   })
+
+  const displayedVideos = platform === 'all' || platform === 'instagram'
+    ? pinReferenceReel(filtered)
+    : filtered
 
   const source = (feedInfo.source || '').toLowerCase()
   const sourceNotice = /demo|mock/.test(source)
@@ -213,18 +218,21 @@ export default function TrendingFeed({ onSelectReel }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map(video => (
+          {displayedVideos.map(video => (
             <ReelCard
               key={`${video.id}-${video.region || 'global'}`}
               video={video}
-              onSelect={() => setSelectedVideo(video)}
+              onSelect={() => {
+                document.querySelectorAll('video').forEach(media => media.pause())
+                setSelectedVideo(video)
+              }}
               onUse={() => onSelectReel(video)}
             />
           ))}
         </div>
       )}
 
-      {!loading && filtered.length === 0 && (
+      {!loading && displayedVideos.length === 0 && (
         <div className="text-center py-20">
           <Flame className="w-12 h-12 text-slate-700 mx-auto mb-4" />
           <p className="text-slate-400">No videos found. Try changing country, platform, industry or search filters.</p>

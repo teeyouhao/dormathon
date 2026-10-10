@@ -1,6 +1,8 @@
 import { Eye, Heart, Share2, Play, Sparkles, Clock, MapPin, Calendar } from 'lucide-react'
+import { isReferenceReel } from '../data/referenceReel'
 
 export default function ReelCard({ video, onSelect, onUse }) {
+  const reference = isReferenceReel(video)
   const likesHidden = video.likesHidden || video.likesCount === -1
 
   const formatNumber = (n) => {
@@ -26,42 +28,67 @@ export default function ReelCard({ video, onSelect, onUse }) {
     <div className="reel-card glass rounded-2xl overflow-hidden flex flex-col group cursor-pointer" onClick={onSelect}>
       {/* Thumbnail */}
       <div className="relative aspect-[9/16] overflow-hidden">
-        <img
-          src={video.thumbnail}
-          alt={video.title}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-        />
+        {reference ? (
+          <video
+            src={video.videoUrl}
+            poster={video.thumbnail}
+            controls
+            playsInline
+            preload="none"
+            aria-label={video.title}
+            className="w-full h-full object-cover"
+            onClickCapture={(event) => {
+              const media = event.currentTarget
+              const bounds = media.getBoundingClientRect()
+              // Leave the native control strip and keyboard clicks to the browser.
+              if (event.detail === 0 || event.clientY >= bounds.bottom - 64) return
+              event.preventDefault()
+              event.stopPropagation()
+              if (media.paused) media.play().catch(() => {})
+              else media.pause()
+            }}
+            onClick={(event) => event.stopPropagation()}
+          />
+        ) : (
+          <img
+            src={video.thumbnail}
+            alt={video.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        )}
         {/* Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20" />
+        <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20${reference ? ' pointer-events-none' : ''}`} />
 
         {/* Platform Badge */}
-        <div className="absolute top-2 left-2">
+        <div className={`absolute top-2 left-2${reference ? ' pointer-events-none' : ''}`}>
           <span className={`platform-badge platform-${video.platform}`}>
             {video.platform}
           </span>
         </div>
 
         {/* Date Badge */}
-        <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur text-[10px] font-medium text-white flex items-center gap-1">
+        <div className={`absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur text-[10px] font-medium text-white flex items-center gap-1${reference ? ' pointer-events-none' : ''}`}>
           <Calendar className="w-2.5 h-2.5" /> {formatDate(video.uploadedAt)}
         </div>
 
         {/* Play Button */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-          <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
-            <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
+        {!reference && (
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
+              <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Duration */}
         {video.duration != null && video.duration !== '' && (
-          <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white font-medium flex items-center gap-1">
+          <div className={`absolute right-2 px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white font-medium flex items-center gap-1${reference ? ' bottom-14 pointer-events-none' : ' bottom-2'}`}>
             <Clock className="w-2.5 h-2.5" /> {video.duration}
           </div>
         )}
 
         {/* Bottom Info */}
-        <div className="absolute bottom-0 left-0 right-0 p-2">
+        <div className={`absolute left-0 right-0 p-2${reference ? ' bottom-12 pointer-events-none' : ' bottom-0'}`}>
           {/* Location */}
           {video.location && (
             <div className="flex items-center gap-1 text-white/70 text-[10px] mb-0.5">
@@ -75,7 +102,7 @@ export default function ReelCard({ video, onSelect, onUse }) {
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="text-blue-300 text-[10px] hover:text-blue-200 hover:underline"
+              className={`text-blue-300 text-[10px] hover:text-blue-200 hover:underline${reference ? ' pointer-events-auto' : ''}`}
             >
               {video.creator}
             </a>
