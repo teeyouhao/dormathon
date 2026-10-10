@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Flame, Search, RefreshCw, Play, X, Sparkles, MapPin, Calendar, Clock, ExternalLink } from 'lucide-react'
 import { fetchTrending } from '../services/api'
 import { platformInfo, industryCategories, industryAliases, southeastAsiaCountries } from '../data/mockData'
@@ -33,30 +33,45 @@ export default function TrendingFeed({ onSelectReel }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState('recent')
   const [selectedVideo, setSelectedVideo] = useState(null)
+  const [feedInfo, setFeedInfo] = useState({ source: null, message: '', warnings: [] })
+  const requestSequence = useRef(0)
+
+  const loadTrending = useCallback(async () => {
+    const requestId = ++requestSequence.current
+    setLoading(true)
+    setFeedInfo({ source: null, message: '', warnings: [] })
+    try {
+      const data = await fetchTrending(platform, region, industry)
+      if (requestId !== requestSequence.current) return
+      setVideos(Array.isArray(data) ? data : data?.data || [])
+      setFeedInfo({
+        source: data?.source || null,
+        message: data?.message || '',
+        warnings: Array.isArray(data?.warnings) ? data.warnings : []
+      })
+    } catch {
+      if (requestId !== requestSequence.current) return
+      setVideos([])
+      setFeedInfo({ source: null, message: 'Unable to load the feed. Please try again.', warnings: [] })
+    } finally {
+      if (requestId === requestSequence.current) setLoading(false)
+    }
+  }, [platform, region, industry])
 
   useEffect(() => {
     loadTrending()
-  }, [platform, region, industry])
-
-  const loadTrending = async () => {
-    setLoading(true)
-    const data = await fetchTrending(platform, region, industry)
-    if (Array.isArray(data)) {
-      setVideos(data)
-    } else {
-      setVideos(data?.data || [])
-    }
-    setLoading(false)
-  }
+    return () => { requestSequence.current += 1 }
+  }, [loadTrending])
 
   const formatDate = (dateStr) => {
+    if (dateStr == null || dateStr === '') return 'Unknown date'
     const d = new Date(dateStr)
     if (Number.isNaN(d.getTime())) return 'Unknown date'
     const now = new Date()
     const diff = Math.floor((now - d) / (1000 * 60 * 60 * 24))
     if (diff === 0) return 'Today'
     if (diff === 1) return 'Yesterday'
-    if (diff < 7) return `${diff} days ago`
+    if (diff > 1 && diff < 7) return `${diff} days ago`
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
@@ -73,12 +88,27 @@ export default function TrendingFeed({ onSelectReel }) {
     }
     return true
   }).sort((a, b) => {
-    if (sortBy === 'views') return (b.views || 0) - (a.views || 0)
-    if (sortBy === 'likes') return (b.likes || 0) - (a.likes || 0)
-    if (sortBy === 'shares') return (b.shares || 0) - (a.shares || 0)
-    if (sortBy === 'recent') return new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0)
+    if (sortBy === 'views') return (b.views ?? -1) - (a.views ?? -1)
+    if (sortBy === 'likes') return (b.likes ?? -1) - (a.likes ?? -1)
+    if (sortBy === 'shares') return (b.shares ?? -1) - (a.shares ?? -1)
+    if (sortBy === 'recent') {
+      const aTime = a.uploadedAt == null || a.uploadedAt === '' ? NaN : new Date(a.uploadedAt).getTime()
+      const bTime = b.uploadedAt == null || b.uploadedAt === '' ? NaN : new Date(b.uploadedAt).getTime()
+      if (!Number.isFinite(aTime)) return Number.isFinite(bTime) ? 1 : 0
+      if (!Number.isFinite(bTime)) return -1
+      return bTime - aTime
+    }
     return (a.trendingRank || 999) - (b.trendingRank || 999)
   })
+
+  const source = (feedInfo.source || '').toLowerCase()
+  const sourceNotice = /demo|mock/.test(source)
+    ? 'Demo data — not live platform results.'
+    : /local/.test(source)
+      ? 'Local data — not a live platform fetch.'
+      : /live|api|scraper/.test(source)
+        ? 'Live provider data (may be cached).'
+        : source ? 'Provider data.' : 'Data source not reported.'
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -141,11 +171,32 @@ export default function TrendingFeed({ onSelectReel }) {
         </select>
         <button
           onClick={loadTrending}
-          className="px-4 py-2.5 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition flex items-center gap-2"
+          disabled={loading}
+          className="px-4 py-2.5 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
+      </div>
+
+      <div className="mb-4 space-y-2">
+        {(platform === 'all' || platform === 'instagram') && (
+          <p className="text-xs text-slate-400">Instagram hashtag feeds are global, not country-targeted. The country filter does not target Instagram results.</p>
+        )}
+        {!loading && (
+          <div className="glass rounded-lg p-3 text-xs text-slate-300 space-y-1" role="status">
+            <p>{sourceNotice}{feedInfo.source && <span className="text-slate-400"> Source: {feedInfo.source}</span>}</p>
+            {feedInfo.message && <p>{feedInfo.message}</p>}
+            {feedInfo.warnings.length > 0 && (
+              <div className="text-amber-300">
+                <p className="font-medium">Provider warnings</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {feedInfo.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -192,10 +243,23 @@ export default function TrendingFeed({ onSelectReel }) {
             <div className="grid md:grid-cols-2 gap-6 p-6">
               <div>
                 <div className="relative aspect-[9/16] rounded-xl overflow-hidden">
-                  <img src={selectedVideo.thumbnail} alt={selectedVideo.title} className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Play className="w-12 h-12 text-white/80" fill="white" />
-                  </div>
+                  {selectedVideo.videoUrl ? (
+                    <video
+                      src={selectedVideo.videoUrl}
+                      controls
+                      playsInline
+                      preload="none"
+                      poster={selectedVideo.thumbnail}
+                      className="w-full h-full object-contain bg-black"
+                    />
+                  ) : (
+                    <>
+                      <img src={selectedVideo.thumbnail} alt={selectedVideo.title} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Play className="w-12 h-12 text-white/80" fill="white" />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="space-y-4">
@@ -223,22 +287,35 @@ export default function TrendingFeed({ onSelectReel }) {
                     <div><p className="text-xs text-slate-400">Location</p><p className="text-sm text-white">{selectedVideo.location}</p></div>
                   </div>
                 )}
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-brand-400" />
-                  <div><p className="text-xs text-slate-400">Duration</p><p className="text-sm text-white">{selectedVideo.duration}</p></div>
-                </div>
+                {selectedVideo.duration != null && selectedVideo.duration !== '' && (
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-brand-400" />
+                    <div><p className="text-xs text-slate-400">Duration</p><p className="text-sm text-white">{selectedVideo.duration}</p></div>
+                  </div>
+                )}
+                {(selectedVideo.likesHidden || selectedVideo.likesCount === -1) && (
+                  <p className="text-xs text-slate-400" title="Hidden by creator">Likes: Hidden by creator</p>
+                )}
                 <div>
                   <p className="text-xs text-slate-400 mb-1">Industry</p>
                   <p className="text-sm text-white capitalize">{selectedVideo.industry || selectedVideo.category || 'General SME'}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-400 mb-1">Description</p>
-                  <p className="text-sm text-slate-300">{selectedVideo.description}</p>
+                  <p className="text-xs text-slate-400 mb-1">{selectedVideo.caption ? 'Caption' : 'Description'}</p>
+                  <p className="text-sm text-slate-300 whitespace-pre-wrap break-words">{selectedVideo.caption || selectedVideo.description}</p>
                 </div>
+                {selectedVideo.caption && selectedVideo.description && selectedVideo.caption !== selectedVideo.description && (
+                  <div>
+                    <p className="text-xs text-slate-400 mb-1">Description</p>
+                    <p className="text-sm text-slate-300 whitespace-pre-wrap break-words">{selectedVideo.description}</p>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs text-slate-400 mb-1">Tags</p>
                   <div className="flex flex-wrap gap-2">
-                    {selectedVideo.tags?.map(tag => <span key={tag} className="px-2 py-1 rounded bg-brand-500/10 text-brand-300 text-xs">#{tag}</span>)}
+                    {[...new Set([...(selectedVideo.tags || []), ...(selectedVideo.hashtags || [])].map(tag => tag.replace(/^#/, '')))].map(tag => (
+                      <span key={tag} className="px-2 py-1 rounded bg-brand-500/10 text-brand-300 text-xs">#{tag}</span>
+                    ))}
                   </div>
                 </div>
                 <a href={selectedVideo.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300">

@@ -5,7 +5,7 @@ import { getSettings, saveSettings, getHealth } from '../services/api'
 export default function SettingsPage() {
   const [settings, setSettings] = useState({
     youtube: { apiKey: '' },
-    instagram: { enabled: false, headless: true },
+    instagram: { enabled: false, tokenConfigured: false, resultsPerHashtag: 3, cacheMinutes: 30, maxChargeUsd: 0.1, onlyPostsNewerThan: '' },
     tiktok: { enabled: false, headless: true },
     ai: { provider: 'openai', apiKey: '' },
     supabase: { url: '', table: 'reels', keyConfigured: false }
@@ -96,10 +96,37 @@ export default function SettingsPage() {
         <div className="flex items-center gap-2 mb-3">
           <Instagram className="w-5 h-5 text-pink-400" />
           <h3 className="text-sm font-semibold text-white">Instagram Scraper</h3>
-          <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-medium">DIY Scraping</span>
+          <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-medium">Apify</span>
         </div>
         <p className="text-xs text-slate-400 mb-3">
-          Uses Playwright headless browser to scrape Instagram trending reels. No official API — this is a custom scraper.
+          Uses the <code className="bg-black/30 px-1 rounded">apify/instagram-scraper</code> actor to fetch Instagram reels by hashtag. Hashtag feeds are global, not country-targeted.
+        </p>
+        <p className="text-xs text-slate-400 mb-3">
+          Configure <code className="bg-black/30 px-1 rounded">APIFY_TOKEN</code> on the server only. Tokens are never entered in this page.
+        </p>
+        <p className={`text-xs mb-3 ${settings.instagram?.tokenConfigured ? 'text-green-400' : 'text-amber-400'}`}>
+          Token status: {settings.instagram?.tokenConfigured ? 'Configured on server' : 'Not configured on server'}
+        </p>
+        <dl className="grid grid-cols-2 gap-3 mb-3 text-xs">
+          <div className="rounded-lg bg-white/5 p-3">
+            <dt className="text-slate-400">Results per hashtag</dt>
+            <dd className="text-white mt-1">{settings.instagram?.resultsPerHashtag ?? 3}</dd>
+          </div>
+          <div className="rounded-lg bg-white/5 p-3">
+            <dt className="text-slate-400">Cache duration</dt>
+            <dd className="text-white mt-1">{settings.instagram?.cacheMinutes ?? 30} minutes</dd>
+          </div>
+          <div className="rounded-lg bg-white/5 p-3">
+            <dt className="text-slate-400">Maximum charge per run</dt>
+            <dd className="text-white mt-1">USD {settings.instagram?.maxChargeUsd ?? 0.1}</dd>
+          </div>
+          <div className="rounded-lg bg-white/5 p-3">
+            <dt className="text-slate-400">Only posts newer than</dt>
+            <dd className="text-white mt-1">{settings.instagram?.onlyPostsNewerThan || 'Not configured'}</dd>
+          </div>
+        </dl>
+        <p className="text-[10px] text-slate-500 mb-3">
+          Limits are configured on the server. The charge limit is not a fixed price; actual Apify charges depend on usage and provider pricing.
         </p>
         <label className="flex items-center gap-2 cursor-pointer">
           <input
@@ -113,7 +140,9 @@ export default function SettingsPage() {
         {settings.instagram.enabled && (
           <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
             <p className="text-xs text-amber-300">
-              Note: Instagram actively blocks scrapers. This may require periodic maintenance and could break. Use responsibly.
+              {settings.instagram.tokenConfigured
+                ? 'Instagram fetching is enabled. Requests may start paid Apify runs when cached results are unavailable.'
+                : 'Instagram fetching is enabled, but APIFY_TOKEN must be configured on the server before live results are available.'}
             </p>
           </div>
         )}
@@ -223,7 +252,7 @@ export default function SettingsPage() {
           <div className="text-xs text-slate-400 space-y-1">
             <p><strong className="text-slate-300">How it works:</strong></p>
             <p>1. YouTube trending uses the official Data API v3 (free, 10K requests/day)</p>
-            <p>2. Instagram & TikTok use Playwright headless browser scraping (DIY, free, but fragile)</p>
+            <p>2. Instagram uses Apify's apify/instagram-scraper actor (usage-based charges); TikTok uses Playwright headless browser scraping (DIY, free, but fragile)</p>
             <p>3. AI concept generation uses LLM APIs or a local algorithmic fallback</p>
             <p>4. The app works with mock data even when no APIs are configured</p>
           </div>

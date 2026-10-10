@@ -63,6 +63,7 @@ router.get('/', async (req, res) => {
 
   try {
     const results = []
+    const warnings = []
 
     if (platform === 'all' || platform === 'youtube') {
       const ytRegion = region === 'all' ? 'US' : region
@@ -72,8 +73,13 @@ router.get('/', async (req, res) => {
 
     if (platform === 'all' || platform === 'instagram') {
       if (process.env.INSTAGRAM_SCRAPING_ENABLED === 'true') {
-        const igReels = await fetchInstagramTrending({ maxResults: 10, region })
-        if (igReels) results.push(...igReels)
+        try {
+          const igReels = await fetchInstagramTrending({ maxResults: 10, onWarning: warning => warnings.push(warning) })
+          if (igReels?.length) results.push(...igReels)
+          else warnings.push('Instagram: no playable clips were returned for the selected hashtags/date window. Hashtag reels support depends on the Actor; no other input mode was used.')
+        } catch (error) {
+          warnings.push(error.message)
+        }
       }
     }
 
@@ -90,6 +96,7 @@ router.get('/', async (req, res) => {
       return res.json({
         data: filtered,
         source: 'mock',
+        warnings,
         region,
         industry,
         storage,
@@ -106,6 +113,7 @@ router.get('/', async (req, res) => {
     res.json({
       data: filteredLive,
       source: 'live',
+      warnings,
       region,
       industry,
       storage,

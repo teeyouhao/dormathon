@@ -47,10 +47,10 @@ export function normalizeReel(reel, context = {}) {
     creator: reel.creator || '',
     creator_url: reel.creatorUrl || reel.creator_url || '',
     thumbnail: reel.thumbnail || '',
-    views: Number(reel.views || 0),
-    likes: Number(reel.likes || 0),
-    shares: Number(reel.shares || 0),
-    comments: Number(reel.comments || 0),
+    views: reel.views == null ? null : Number(reel.views),
+    likes: reel.likesHidden || reel.likes == null ? null : Number(reel.likes),
+    shares: reel.shares == null ? null : Number(reel.shares),
+    comments: reel.comments == null ? null : Number(reel.comments),
     duration: reel.duration || '',
     region: reel.region || context.region || 'all',
     location: reel.location || '',
@@ -61,7 +61,7 @@ export function normalizeReel(reel, context = {}) {
     uploaded_at: toIsoDate(reel.uploadedAt || reel.uploaded_at),
     description: reel.description || '',
     tags: Array.isArray(reel.tags) ? reel.tags : [],
-    source: context.source || 'unknown',
+    source: reel.source || context.source || 'unknown',
     fetched_at: new Date().toISOString(),
     raw: reel
   }

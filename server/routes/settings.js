@@ -2,6 +2,7 @@ import { Router } from 'express'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { getInstagramConfig } from '../services/instagramScraper.js'
 
 const router = Router()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -15,7 +16,7 @@ function readSettings() {
   } catch {}
   return {
     youtube: { apiKey: '' },
-    instagram: { enabled: false },
+    instagram: { enabled: getInstagramConfig().enabled },
     tiktok: { enabled: false },
     ai: { provider: 'local', apiKey: '' },
     supabase: { url: process.env.SUPABASE_URL || '', table: process.env.SUPABASE_REELS_TABLE || 'reels' }
@@ -32,6 +33,8 @@ router.get('/', (req, res) => {
   // Mask API keys for security
   const masked = {
     ...settings,
+    // Report effective runtime config, never expose or accept the Apify token here.
+    instagram: getInstagramConfig(),
     youtube: {
       apiKey: settings.youtube?.apiKey
         ? settings.youtube.apiKey.substring(0, 6) + '...' + settings.youtube.apiKey.slice(-4)
@@ -55,7 +58,15 @@ router.get('/', (req, res) => {
 // POST /api/settings
 router.post('/', (req, res) => {
   const current = readSettings()
-  const updated = { ...current, ...req.body }
+  const updated = {
+    ...current,
+    ...req.body,
+    instagram: {
+      enabled: typeof req.body.instagram?.enabled === 'boolean'
+        ? req.body.instagram.enabled
+        : getInstagramConfig().enabled
+    }
+  }
   writeSettings(updated)
 
   // Also update environment variables for the current session

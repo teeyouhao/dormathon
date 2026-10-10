@@ -1,150 +1,201 @@
-// Instagram Trending Scraper using Playwright
-// NOTE: Instagram does not have an official API for trending/explore content.
-// This scraper uses a headless browser to navigate Instagram's explore page
-// and extract trending reel data.
+// Server-only Apify provider. Never log request URLs, tokens or upstream error bodies.
+const ACTOR_URL = 'https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items'
+export const INSTAGRAM_HASHTAGS = Object.freeze(['mostviewed', 'trending', 'viral'])
 
-// Due to Instagram's anti-bot measures, this scraper may require:
-// 1. A logged-in session (cookies)
-// 2. Proxy rotation
-// 3. Periodic maintenance when Instagram changes its HTML structure
-
-let chromium = null
-
-async function getChromium() {
-  if (!chromium) {
-    try {
-      const playwright = await import('playwright')
-      chromium = playwright.chromium
-    } catch (err) {
-      console.warn('[Instagram] Playwright not installed. Install with: npm install playwright && npx playwright install chromium')
-      return null
-    }
-  }
-  return chromium
+function boundedNumber(value, fallback, min, max) {
+  const number = value === undefined || value === '' ? fallback : Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
 }
 
-export async function fetchInstagramTrending(options = {}) {
-  const { headless = true, maxResults = 10, sessionCookies, region = 'all' } = options
-
-  const browser = await getChromium()
-  if (!browser) return null
-
-  let context
-  try {
-    context = await browser.launch({ headless })
-
-    const page = await context.newPage()
-
-    // Set a realistic user agent
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9'
-    })
-
-    // Load session cookies if provided
-    if (sessionCookies && sessionCookies.length > 0) {
-      await context.addCookies(sessionCookies)
-    }
-
-    // Navigate to Instagram explore/reels page
-    console.log('[Instagram] Navigating to explore page...')
-    await page.goto('https://www.instagram.com/explore/reels/', {
-      waitUntil: 'networkidle',
-      timeout: 30000
-    })
-
-    // Wait for reel thumbnails to load
-    await page.waitForSelector('article, [role="main"]', { timeout: 15000 }).catch(() => {})
-
-    // Scroll to load more content
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2))
-      await page.waitForTimeout(1500)
-    }
-
-    // Extract reel data
-    const reels = await page.evaluate(({ max, region }) => {
-      const items = []
-      const articles = document.querySelectorAll('article, [role="main"] div[class*="reel"], div[class*="_ac"] a[href*="/reel/"]')
-
-      articles.forEach((el, idx) => {
-        if (idx >= max) return
-        const title = el.querySelector('img[alt]')?.getAttribute('alt') || el.querySelector('span')?.textContent || 'Instagram Reel'
-        const creator = el.querySelector('a[href*="/"][class*="owner"], a[role="link"]')?.textContent || ''
-        const thumbnail = el.querySelector('img')?.src || ''
-        const url = el.querySelector('a[href*="/reel/"]')?.href || el.querySelector('a')?.href || ''
-        const likes = parseInt(el.querySelector('[class*="like"] span')?.textContent?.replace(/[^0-9]/g, '') || '0')
-        const views = parseInt(el.querySelector('[class*="view"] span')?.textContent?.replace(/[^0-9]/g, '') || '0')
-
-        if (url) {
-          items.push({
-            id: `ig-${idx}`,
-            platform: 'instagram',
-            title: title.substring(0, 100),
-            creator,
-            creatorUrl: creator ? `https://instagram.com/${creator.replace('@', '')}` : '',
-            thumbnail,
-            views: views || likes * 10 || Math.floor(Math.random() * 5000000),
-            likes: likes || Math.floor(Math.random() * 300000),
-            shares: Math.floor(Math.random() * 100000),
-            comments: Math.floor(Math.random() * 15000),
-            duration: `0:${String(Math.max(5, Math.floor(Math.random() * 60))).padStart(2, '0')}`,
-            region,
-            url,
-            trendingRank: idx + 1,
-            uploadedAt: new Date().toISOString().split('T')[0],
-            description: '',
-            tags: []
-          })
-        }
-      })
-
-      return items
-    }, { max: maxResults, region })
-
-    await context.close()
-    console.log(`[Instagram] Scraped ${reels.length} reels`)
-    return reels
-  } catch (err) {
-    console.error('[Instagram] Scraping error:', err.message)
-    if (context) await context.close()
-    return null
+export function getInstagramConfig(env = process.env) {
+  return {
+    enabled: env.INSTAGRAM_SCRAPING_ENABLED === 'true',
+    tokenConfigured: Boolean(env.APIFY_TOKEN?.trim()),
+    resultsPerHashtag: Math.floor(boundedNumber(env.APIFY_INSTAGRAM_RESULTS_LIMIT, 3, 1, 30)),
+    onlyPostsNewerThan: (env.APIFY_INSTAGRAM_ONLY_POSTS_NEWER_THAN ?? '7 days').trim(),
+    cacheMinutes: boundedNumber(env.APIFY_INSTAGRAM_CACHE_MINUTES, 30, 1, 1440),
+    maxChargeUsd: boundedNumber(env.APIFY_INSTAGRAM_MAX_CHARGE_USD, 0.1, 0.01, 1),
+    timeoutSeconds: Math.floor(boundedNumber(env.APIFY_INSTAGRAM_TIMEOUT_SECONDS, 180, 10, 240))
   }
 }
 
-// Alternative: Parse Instagram's public data structure
-export async function fetchInstagramTrendingSimple() {
-  // Instagram embeds some trending data in their public HTML
-  // This is a fallback method that doesn't require login
-  const browser = await getChromium()
-  if (!browser) return null
+export function buildInstagramInput(config = getInstagramConfig()) {
+  return {
+    resultsType: 'reels',
+    directUrls: INSTAGRAM_HASHTAGS.map(tag => `https://www.instagram.com/explore/tags/${tag}/`),
+    resultsLimit: config.resultsPerHashtag,
+    ...(config.onlyPostsNewerThan ? { onlyPostsNewerThan: config.onlyPostsNewerThan } : {})
+  }
+}
 
-  let context
+function metric(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function httpsUrl(value) {
+  if (typeof value !== 'string') return null
   try {
-    context = await browser.launch({ headless: true })
-    const page = await context.newPage()
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password ? url.href : null
+  } catch { return null }
+}
 
-    await page.goto('https://www.instagram.com/explore/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 20000
-    })
+export function normalizeInstagramReel(item) {
+  if (!item || item.productType !== 'clips') return null
+  const videoUrl = httpsUrl(item.videoUrl)
+  if (!videoUrl) return null
+  const shortCode = typeof item.shortCode === 'string' && /^[\w-]+$/.test(item.shortCode) ? item.shortCode : null
+  const externalId = shortCode || (item.id != null ? String(item.id) : null)
+  if (!externalId) return null
+  const caption = typeof item.caption === 'string' ? item.caption : ''
+  const hashtags = Array.isArray(item.hashtags) ? [...new Set(item.hashtags.filter(tag => typeof tag === 'string'))] : []
+  const ownerUsername = typeof item.ownerUsername === 'string' ? item.ownerUsername : ''
+  const likesHidden = item.likesCount === -1
+  const likesCount = likesHidden ? -1 : metric(item.likesCount)
+  const commentsCount = metric(item.commentsCount)
+  const videoViewCount = metric(item.videoViewCount)
+  const videoPlayCount = metric(item.videoPlayCount)
+  const timestamp = typeof item.timestamp === 'string' && Number.isFinite(Date.parse(item.timestamp)) ? item.timestamp : null
+  const seconds = metric(item.videoDuration)
+  const duration = seconds === null ? null : `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
 
-    const data = await page.evaluate(() => {
-      // Try to extract from page source
-      const scripts = document.querySelectorAll('script[type="application/json"]')
-      for (const script of scripts) {
-        try {
-          const json = JSON.parse(script.textContent)
-          if (json?.data?.media?.trending) return json.data.media.trending
-        } catch {}
+  return {
+    id: `instagram-${externalId}`,
+    platform: 'instagram',
+    source: 'apify-instagram',
+    productType: 'clips',
+    videoUrl,
+    caption,
+    hashtags,
+    ownerUsername,
+    likesCount,
+    commentsCount,
+    videoViewCount,
+    videoPlayCount,
+    timestamp,
+    shortCode,
+    likesHidden,
+    title: caption.slice(0, 100) || 'Instagram Reel',
+    description: caption,
+    tags: hashtags,
+    creator: ownerUsername ? `@${ownerUsername}` : '',
+    creatorUrl: ownerUsername ? `https://www.instagram.com/${encodeURIComponent(ownerUsername)}/` : '',
+    thumbnail: httpsUrl(item.displayUrl) || '',
+    views: videoViewCount ?? videoPlayCount,
+    likes: likesHidden ? null : likesCount,
+    comments: commentsCount,
+    shares: null,
+    duration,
+    region: 'all', // Global hashtag discovery cannot infer the creator's country.
+    location: typeof item.locationName === 'string' ? item.locationName : '',
+    url: shortCode ? `https://www.instagram.com/reel/${shortCode}/` : '',
+    uploadedAt: timestamp
+  }
+}
+
+export class InstagramFetchError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.name = 'InstagramFetchError'
+    this.code = code
+  }
+}
+
+function responseError(status) {
+  if (status === 401 || status === 403) return new InstagramFetchError('AUTH', 'Instagram: Apify rejected authentication. Check the server APIFY_TOKEN and Actor access.')
+  if (status === 402) return new InstagramFetchError('CREDIT', 'Instagram: Apify credits or billing limits prevented the run.')
+  if (status === 429) return new InstagramFetchError('RATE_LIMIT', 'Instagram: Apify rate limit reached. Please wait before retrying.')
+  if (status === 400) return new InstagramFetchError('INPUT', 'Instagram: Apify rejected the reels/hashtag input. Check the Actor input schema; no alternative input mode was used.')
+  if (status === 408) return new InstagramFetchError('TIMEOUT', 'Instagram: Apify timed out. The remote run may still be active; check its status before starting another run.')
+  return new InstagramFetchError('UPSTREAM', `Instagram: Apify returned HTTP ${status}. No automatic retry was made.`)
+}
+
+// Injectable dependencies keep automated tests offline and prevent accidental paid runs.
+export function createInstagramFetcher({ fetchImpl = globalThis.fetch, getEnv = () => process.env, now = Date.now } = {}) {
+  let cache = null
+  let inFlight = null
+  let failure = null
+
+  return async function fetchInstagramTrending(options = {}) {
+    const env = getEnv()
+    const config = getInstagramConfig(env)
+    if (!config.enabled) return null
+    if (!config.tokenConfigured) throw new InstagramFetchError('NOT_CONFIGURED', 'Instagram: configure APIFY_TOKEN on the server to enable live reels.')
+    const input = buildInstagramInput(config)
+    const token = env.APIFY_TOKEN.trim()
+    const key = JSON.stringify([input, config.maxChargeUsd, config.timeoutSeconds, token])
+    const maxResults = Math.floor(boundedNumber(options.maxResults, 10, 1, 90))
+    const copy = result => {
+      if (typeof options.onWarning === 'function') {
+        for (const warning of result.warnings) options.onWarning(warning)
       }
-      return null
-    })
+      return structuredClone(result.data.slice(0, maxResults))
+    }
 
-    await context.close()
-    return data
-  } catch (err) {
-    console.error('[Instagram] Simple scraping error:', err.message)
-    if (context) await context.close()
-    return null
+    // Region/industry/display-limit changes never start a second identical paid run.
+    if (cache?.key === key && cache.expiresAt > now()) return copy(cache.result)
+    if (failure?.key === key && failure.retryAt > now()) throw failure.error
+    if (inFlight) {
+      // Even configuration changes cannot launch parallel billable runs in this process.
+      const pending = inFlight
+      if (pending.key === key) return copy(await pending.promise)
+      await pending.promise.catch(() => {})
+      return fetchInstagramTrending(options)
+    }
+
+    const promise = (async () => {
+      try {
+        const maxItems = config.resultsPerHashtag * INSTAGRAM_HASHTAGS.length
+        const url = new URL(ACTOR_URL)
+        url.searchParams.set('token', token)
+        url.searchParams.set('timeout', String(config.timeoutSeconds))
+        url.searchParams.set('maxItems', String(maxItems))
+        url.searchParams.set('maxTotalChargeUsd', String(config.maxChargeUsd))
+        url.searchParams.set('limit', String(maxItems))
+        url.searchParams.set('restartOnError', 'false')
+        const response = await fetchImpl(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(input),
+          // A remote run timeout and an HTTP deadline are separate safeguards.
+          signal: AbortSignal.timeout((config.timeoutSeconds + 15) * 1000)
+        })
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => {})
+          throw responseError(response.status)
+        }
+        const items = await response.json()
+        if (!Array.isArray(items)) throw new InstagramFetchError('INVALID_DATA', 'Instagram: Apify returned an unexpected dataset response.')
+        const unique = new Map()
+        for (const item of items.slice(0, maxItems)) {
+          const reel = normalizeInstagramReel(item)
+          if (reel && !unique.has(reel.id)) unique.set(reel.id, reel)
+        }
+        const data = [...unique.values()].sort((a, b) => (b.views ?? -1) - (a.views ?? -1))
+        const hasErrors = items.some(item => item?.error || item?.errorDescription)
+        if (!data.length && hasErrors) {
+          throw new InstagramFetchError('DATASET_ERROR', 'Instagram: Apify returned dataset errors, not playable reels. Check the Actor run; no alternative input mode was used.')
+        }
+        const result = {
+          data,
+          warnings: hasErrors ? ['Instagram: some hashtag requests returned errors. Showing the playable clips that succeeded; check the Actor run for details.'] : []
+        }
+        cache = { key, result, expiresAt: now() + config.cacheMinutes * 60000 }
+        failure = null
+        return result
+      } catch (error) {
+        // Never forward an upstream message: it can contain the token-bearing URL.
+        const safe = error instanceof InstagramFetchError ? error : new InstagramFetchError(
+          error?.name === 'TimeoutError' || error?.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK',
+          'Instagram: the Apify request failed or timed out. Check the Actor run before retrying; it may still incur charges.'
+        )
+        failure = { key, error: safe, retryAt: now() + Math.max(5, config.cacheMinutes) * 60000 }
+        throw safe
+      }
+    })()
+    inFlight = { key, promise }
+    try { return copy(await promise) } finally { inFlight = null }
   }
 }
+
+export const fetchInstagramTrending = createInstagramFetcher()

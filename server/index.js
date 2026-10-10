@@ -9,10 +9,10 @@ import aiRouter from './routes/ai.js'
 import editorRouter from './routes/editor.js'
 import settingsRouter from './routes/settings.js'
 import { getSupabaseStatus } from './services/supabaseStore.js'
-
-dotenv.config()
+import { getInstagramConfig } from './services/instagramScraper.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+dotenv.config({ path: path.join(__dirname, '.env') })
 const app = express()
 const PORT = process.env.PORT || 3001
 
@@ -37,7 +37,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     services: {
       youtube: !!process.env.YOUTUBE_API_KEY,
-      instagram: process.env.INSTAGRAM_SCRAPING_ENABLED === 'true',
+      instagram: getInstagramConfig().enabled && getInstagramConfig().tokenConfigured,
       tiktok: process.env.TIKTOK_SCRAPING_ENABLED === 'true',
       ai: !!process.env.OPENAI_API_KEY || !!process.env.ANTHROPIC_API_KEY,
       supabase: getSupabaseStatus().configured

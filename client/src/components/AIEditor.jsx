@@ -603,6 +603,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     setEditing(true)
     const res = await submitVideoEdit({
       videoId: reel.id,
+      // Keep the editor's existing reference workflow; direct media is previewed in the feed.
       videoUrl: reel.url,
       selectedClip: selectedClip ? {
         id: selectedClip.id,
@@ -1237,7 +1238,12 @@ function GenerateMode({ reel, brandInfo }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const formatViews = (n) => n >= 1000000 ? (n/1000000).toFixed(1)+'M' : (n/1000).toFixed(0)+'K'
+  const formatViews = (n) => {
+    if (n == null || !Number.isFinite(n) || n < 0) return 'Unknown'
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+    return String(n)
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">

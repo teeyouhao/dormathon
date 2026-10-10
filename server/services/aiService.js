@@ -200,6 +200,7 @@ function getCategoryId(industry) {
 }
 
 function formatViews(n) {
+  if (n == null || !Number.isFinite(n) || n < 0) return 'Unknown'
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
   return n.toString()

@@ -7,8 +7,8 @@ Help small and medium enterprises (SMEs) get exposure by finding trending short-
 ## Features
 
 ### Trending Feed
-- Fetches trending short videos across **YouTube, Instagram and TikTok**.
-- Filters: **platform**, **country** (Southeast Asia + other regions), **industry**, free-text **search**, and **sort** (Most Recent / Trending / Most Viewed / Most Liked / Most Shared).
+- Fetches short videos across **YouTube, Instagram and TikTok**, with visibly labelled demo data when no live source returns data. Instagram uses a worldwide hashtag sample, not a global most-viewed ranking; the exact hashtag/Reels input returned three playable clips in a small live smoke test.
+- Filters: **platform**, **country** (Southeast Asia + other regions), **industry**, free-text **search**, and **sort** (Most Recent / Trending / Most Viewed / Most Liked / Most Shared). These controls do not make Instagram results country-specific or a global ranking.
 - Each card shows published date, location, duration and a **clickable creator link**.
 - Detail modal shows full metadata: platform, title, creator link, published date, location, duration, industry, description, tags and the original video link.
 
@@ -36,13 +36,15 @@ The app is honest about where reels come from:
 | Source | When it is used | Real reels? |
 |---|---|---|
 | YouTube Data API v3 | `YOUTUBE_API_KEY` is set | ✅ Yes (official API) |
-| Instagram Playwright scraper | `INSTAGRAM_SCRAPING_ENABLED=true` | ✅ Yes (if not blocked) |
+| Instagram via Apify (`apify/instagram-scraper`) | Server `APIFY_TOKEN` is set and `INSTAGRAM_SCRAPING_ENABLED=true` | ✅ Live provider; tested with one result per hashtag |
 | TikTok Playwright scraper | `TIKTOK_SCRAPING_ENABLED=true` | ✅ Yes (if not blocked) |
 | Bundled demo dataset | No live source returned data | ❌ No — clearly labelled `source: mock` |
 
-So if you see demo reels, it means **no live provider returned data**. Add a YouTube API key and/or enable the scrapers in Settings (or `server/.env`) to get real reels. The API response always reports its `source` so the UI can show it.
+If you see demo reels, **no live provider returned data**. The UI visibly indicates demo status, and the API reports its `source`. Configure a YouTube API key, Instagram's server-only Apify token plus enable flag, or TikTok's scraper to request live data; configuration does not guarantee results.
 
-Instagram and TikTok are scraped with a headless browser; both platforms actively block bots, so those sources are best-effort and may need maintenance.
+Instagram uses the Apify Actor, not local Playwright. It submits `directUrls` for the `mostviewed`, `trending` and `viral` hashtags with `resultsType: "reels"` via POST `run-sync-get-dataset-items`; it never uses `search` or `searchType`. A live smoke test on 2026-10-10 with `resultsLimit: 1` returned HTTP 201 and three playable clips; ongoing availability depends on the Actor and Instagram. TikTok remains a best-effort Playwright headless-browser scraper.
+
+Instagram keeps only items with `productType: "clips"` and an HTTPS `videoUrl`. It preserves the requested metadata fields, including `likesCount: -1` with `likesHidden: true` (shown as hidden in the UI); unknown metrics remain `null`, not zero. The `apify-instagram` source is preserved in database records and raw payloads.
 
 ## Persistence (Supabase)
 
@@ -58,7 +60,7 @@ Helpful endpoints:
 
 - **Frontend**: React + Vite + Tailwind CSS (dark theme)
 - **Backend**: Node.js + Express
-- **Scraping**: Playwright (Instagram & TikTok), YouTube Data API v3
+- **Data providers**: Apify `apify/instagram-scraper` (Instagram), Playwright (TikTok), YouTube Data API v3
 - **Video processing**: FFmpeg (optional)
 - **AI**: OpenAI / Anthropic (optional, with local fallback)
 - **Database**: Supabase (with local JSON fallback)
@@ -81,9 +83,16 @@ cp server/.env.example server/.env
 # then edit server/.env with your keys
 ```
 
-`server/.env` is gitignored — never commit real keys.
+`server/.env` is gitignored — never commit real keys. For Instagram, set both values below in that file; the enable flag defaults to `false`:
 
-### 3. (Optional) Install Playwright for scraping
+```dotenv
+APIFY_TOKEN=your-apify-token
+INSTAGRAM_SCRAPING_ENABLED=true
+```
+
+Keep `APIFY_TOKEN` server-side only; never use a `VITE_` prefix or put it in client configuration. Optional Instagram limits and defaults are listed below. Instagram does not require a local Playwright installation.
+
+### 3. (Optional) Install Playwright for TikTok only
 
 ```bash
 cd server
@@ -102,12 +111,27 @@ npm run dev
 - Backend: http://localhost:3001
 - Health check: http://localhost:3001/api/health
 
+### 5. Run offline server tests
+
+```bash
+# from the project root; no live Apify calls
+npm --prefix server test
+```
+
+Offline tests do not validate live Actor hashtag support.
+
 ## Environment variables
 
 | Variable | Purpose |
 |---|---|
 | `YOUTUBE_API_KEY` | Enables real YouTube trending (official API, free tier) |
-| `INSTAGRAM_SCRAPING_ENABLED` | `true` enables the Instagram Playwright scraper |
+| `APIFY_TOKEN` | Server-only Apify token required for Instagram |
+| `INSTAGRAM_SCRAPING_ENABLED` | `true` enables Instagram via Apify; defaults to `false` and also requires `APIFY_TOKEN` |
+| `APIFY_INSTAGRAM_RESULTS_LIMIT` | Default `3`; range `1–30` per each of the three hashtag URLs (9 requested by default); separate from the UI display limit |
+| `APIFY_INSTAGRAM_ONLY_POSTS_NEWER_THAN` | Default `7 days`; leave blank to omit the date filter |
+| `APIFY_INSTAGRAM_CACHE_MINUTES` | Default `30`; minimum `1`, maximum `1440` minutes |
+| `APIFY_INSTAGRAM_MAX_CHARGE_USD` | Default `0.10` USD per run; clamped to `0.01–1` |
+| `APIFY_INSTAGRAM_TIMEOUT_SECONDS` | Default `180`; range `10–240` seconds for the remote Actor timeout; HTTP deadline is 15 seconds longer |
 | `TIKTOK_SCRAPING_ENABLED` | `true` enables the TikTok Playwright scraper |
 | `AI_PROVIDER` | `local` (default) / `openai` / `anthropic` |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | AI concept generation |
@@ -115,6 +139,13 @@ npm run dev
 | `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_SECRET_KEY` / `SUPABASE_ANON_KEY` | Supabase auth (server-side only) |
 | `SUPABASE_REELS_TABLE` | Table name, defaults to `reels` |
 | `PORT` | Backend port (default `3001`) |
+
+### Instagram request and billing controls
+
+- A shared in-memory cache stores results, including empty results, and concurrent requests are coalesced into one in-flight run. There is no cross-process cache; separate server processes do not share this protection.
+- Errors trigger a cooldown of the greater of 5 minutes and the configured cache duration. There are no automatic retries.
+- Each Actor run uses `maxItems`, `maxTotalChargeUsd` and a remote timeout to bound results, charges and runtime. Check your Apify account's current billing and the per-run cap; do not treat example prices or credit-to-result estimates as guarantees.
+- Before public deployment, protect endpoints that can trigger paid runs with authentication and rate limits. The cache and per-run cap are not a total spending limit.
 
 ## API overview
 
@@ -159,7 +190,9 @@ viral-reels/
 
 ## Notes & limitations
 
-- Instagram and TikTok scrapers rely on headless browsing and may break when those platforms change markup or tighten anti-bot measures. They are best-effort, not guaranteed.
-- Without any live source configured, the trending feed serves the bundled demo dataset and labels it as such.
+- Instagram's exact hashtag/Reels mode passed a small live test, but future results still depend on Apify Actor support. TikTok uses Playwright and may break when markup or anti-bot measures change; live results are not guaranteed.
+- Instagram samples worldwide `mostviewed`, `trending` and `viral` hashtags. It is neither a global most-viewed ranking nor a country-specific feed; sorting the sample does not change that scope.
+- Instagram MP4 links may expire. Obtaining appropriate usage rights remains the user's responsibility.
+- When no live source returns data, the trending feed serves the bundled demo dataset and visibly labels demo status.
 - FFmpeg is optional: with it, exports can render MP4; without it, export manifests are still produced.
-- Supabase credentials stay on the server; only public configuration reaches the browser.
+- Supabase credentials and the Apify token stay on the server; only public configuration reaches the browser.
