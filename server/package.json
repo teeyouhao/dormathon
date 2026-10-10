@@ -1,0 +1,21 @@
+{
+  "name": "viral-reels-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.45.0",
+    "openai": "^4.52.0",
+    "fluent-ffmpeg": "^2.1.3"
+  }
+}
