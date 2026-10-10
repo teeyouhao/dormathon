@@ -6,7 +6,7 @@ import ReelCard from './ReelCard'
 
 const platforms = [
   { id: 'all', label: 'All Platforms', color: '#6366f1' },
-  { id: 'youtube', label: 'YouTube', color: '#ff0000' },
+  { id: 'youtube', label: 'YouTube Shorts', color: '#ff0000' },
   { id: 'instagram', label: 'Instagram', color: '#dc2743' },
   { id: 'tiktok', label: 'TikTok', color: '#00f2ea' }
 ]
@@ -33,8 +33,6 @@ export default function TrendingFeed({ onSelectReel }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState('recent')
   const [selectedVideo, setSelectedVideo] = useState(null)
-  const [sourceLabel, setSourceLabel] = useState('')
-  const [storageLabel, setStorageLabel] = useState('')
 
   useEffect(() => {
     loadTrending()
@@ -45,12 +43,8 @@ export default function TrendingFeed({ onSelectReel }) {
     const data = await fetchTrending(platform, region, industry)
     if (Array.isArray(data)) {
       setVideos(data)
-      setSourceLabel('')
-      setStorageLabel('')
     } else {
       setVideos(data?.data || [])
-      setSourceLabel(data?.source || '')
-      setStorageLabel(data?.storage?.target ? `${data.storage.target} (${data.storage.saved || 0} saved)` : '')
     }
     setLoading(false)
   }
@@ -153,13 +147,6 @@ export default function TrendingFeed({ onSelectReel }) {
           Refresh
         </button>
       </div>
-
-      {(sourceLabel || storageLabel) && (
-        <div className="mb-4 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
-          {sourceLabel && <span>Data source: <span className="text-brand-300 uppercase">{sourceLabel}</span></span>}
-          {storageLabel && <span>Storage: <span className="text-emerald-300">{storageLabel}</span></span>}
-        </div>
-      )}
 
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

@@ -15,7 +15,7 @@ const editorModes = [
 ]
 
 const capcutTools = [
-  { id: 'trim', label: 'Trim', icon: Crop },
+  { id: 'guidance', label: 'Guidance', icon: Film },
   { id: 'text', label: 'Text', icon: Type },
   { id: 'audio', label: 'Audio', icon: Music2 },
   { id: 'filter', label: 'Filters', icon: Sliders },
@@ -43,15 +43,287 @@ const filterPresets = [
   { id: 'bright', name: 'Bright', style: { filter: 'brightness(1.3) saturate(1.3)' } },
 ]
 
+const parseDurationToSeconds = (duration) => {
+  if (typeof duration === 'number' && Number.isFinite(duration)) return duration
+  if (typeof duration === 'string') {
+    if (duration.includes(':')) {
+      const parts = duration.split(':').map(Number)
+      if (parts.length === 2 && parts.every(Number.isFinite)) {
+        return parts[0] * 60 + parts[1]
+      }
+    }
+    const numericDuration = Number(duration)
+    if (Number.isFinite(numericDuration)) return numericDuration
+  }
+  return 30
+}
+
+const formatSeconds = (seconds) => {
+  const safeSeconds = Math.max(0, Math.floor(seconds || 0))
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainingSeconds = safeSeconds % 60
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
+}
+
+const splitDurationIntoClips = (totalSeconds) => {
+  const safeTotal = Math.max(1, Math.round(totalSeconds || 10))
+  const clips = []
+  let remaining = safeTotal
+
+  while (remaining > 4) {
+    clips.push(3)
+    remaining -= 3
+  }
+
+  clips.push(remaining)
+  return clips
+}
+
+const clipBeatBlueprints = [
+  {
+    id: 'hook',
+    name: 'Hook',
+    originalLabel: 'Hook Reference',
+    uploadLabel: 'Hook Clip',
+    goal: 'stop the scroll immediately',
+    originalAnalysis: 'The first beat should prove why the reference short catches attention in the first seconds.',
+    uploadAnalysis: 'Open with the cleanest visual moment from the upload so viewers instantly understand the subject.',
+    originalCamera: 'Start with a bold frame, then pan gently from left to right to reveal the main action.',
+    uploadCamera: 'Start tight on the hero subject, then add a short push-in or slight lateral move.',
+    originalNeed: 'Strong first frame, clean lighting, product or hero action ready before the cut starts',
+    uploadNeed: 'Best hero shot from the upload, stable framing, clear focal point, bright key light',
+    overlay: 'Short punchy hook or bold statement in 3-5 words',
+    peopleNeeded: 1,
+  },
+  {
+    id: 'problem',
+    name: 'Problem',
+    originalLabel: 'Problem Reference',
+    uploadLabel: 'Problem Clip',
+    goal: 'show the pain point or before-state',
+    originalAnalysis: 'This beat explains the pain point, tension, or setup that makes the payoff meaningful.',
+    uploadAnalysis: 'Use the uploaded clip to show the issue, obstacle, or before-state with simple readable action.',
+    originalCamera: 'Hold the frame long enough to read the problem, then finish with a subtle tilt or slide.',
+    uploadCamera: 'Keep the camera mostly locked, then reframe slightly to emphasize the problem area.',
+    originalNeed: 'Mess, pain point, context props, readable facial expression or before-state',
+    uploadNeed: 'Visible before-state, clear environment detail, action that shows what is wrong',
+    overlay: 'Name the problem in one sentence',
+    peopleNeeded: 1,
+  },
+  {
+    id: 'demo',
+    name: 'Demo',
+    originalLabel: 'Demo Reference',
+    uploadLabel: 'Demo Clip',
+    goal: 'demonstrate the action or solution clearly',
+    originalAnalysis: 'This section works as the how-it-works moment where the audience sees the process or transformation.',
+    uploadAnalysis: 'Use this uploaded clip to demonstrate the key action, product usage, or hands-on movement.',
+    originalCamera: 'Follow the hands or subject smoothly and keep the action centered throughout the move.',
+    uploadCamera: 'Track the action smoothly from left to right and let the motion finish inside frame.',
+    originalNeed: 'Demonstration props, stable movement, enough light to show product details',
+    uploadNeed: 'Hands-on action, product in focus, stable motion, uncluttered background',
+    overlay: 'Quick how-to or feature callout',
+    peopleNeeded: 1,
+  },
+  {
+    id: 'proof',
+    name: 'Proof',
+    originalLabel: 'Proof Reference',
+    uploadLabel: 'Proof Clip',
+    goal: 'deliver evidence, payoff, or social proof',
+    originalAnalysis: 'The reference uses this beat to prove the result with reaction, transformation, or payoff.',
+    uploadAnalysis: 'Use the uploaded clip to show proof of results, transformation, or customer confidence.',
+    originalCamera: 'Hold on the result, then add a slow reveal or slight push for emphasis.',
+    uploadCamera: 'Land on the finished result and keep the frame steady so the payoff reads clearly.',
+    originalNeed: 'After-state, testimonial cue, reaction shot, result-oriented framing',
+    uploadNeed: 'Visible result, reaction, transformation, or supporting proof detail',
+    overlay: 'Proof point, metric, or transformation caption',
+    peopleNeeded: 1,
+  },
+  {
+    id: 'cta',
+    name: 'CTA',
+    originalLabel: 'CTA Reference',
+    uploadLabel: 'CTA Clip',
+    goal: 'end with a strong call to action',
+    originalAnalysis: 'This final beat wraps the short with a clear next step or memorable closing frame.',
+    uploadAnalysis: 'End with the cleanest brand or product frame so the CTA feels intentional and easy to act on.',
+    originalCamera: 'Center the hero subject and finish with a stable hold for the CTA text.',
+    uploadCamera: 'Lock the frame, leave clean space for text, and keep the subject centered for the final hold.',
+    originalNeed: 'Logo/product hero frame, clean background, room for CTA text',
+    uploadNeed: 'Brand-safe ending frame, product hero, logo or face visible, clean negative space',
+    overlay: 'CTA, offer, or handle',
+    peopleNeeded: 1,
+  },
+]
+
+const inferClipSubject = ({ reel, fileName }) => {
+  const raw = fileName || reel?.industry || reel?.category || reel?.title || 'product'
+  return raw
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const getBeatBlueprint = (index, totalClips) => {
+  if (totalClips <= 1) return clipBeatBlueprints[2]
+  if (totalClips === 2) return [clipBeatBlueprints[0], clipBeatBlueprints[4]][index] || clipBeatBlueprints[4]
+  if (totalClips === 3) return [clipBeatBlueprints[0], clipBeatBlueprints[2], clipBeatBlueprints[4]][index] || clipBeatBlueprints[4]
+  if (totalClips === 4) return [clipBeatBlueprints[0], clipBeatBlueprints[1], clipBeatBlueprints[2], clipBeatBlueprints[4]][index] || clipBeatBlueprints[4]
+  return clipBeatBlueprints[index] || clipBeatBlueprints[clipBeatBlueprints.length - 1]
+}
+
+const inferPeopleNeeded = ({ source, fileName, reel, beat }) => {
+  const combined = `${fileName || ''} ${reel?.title || ''} ${reel?.description || ''}`.toLowerCase()
+  if (/(team|staff|customer|people|group|family|friends)/.test(combined)) return 2
+  if (beat.id === 'proof') return 2
+  return source === 'upload' ? 1 : beat.peopleNeeded
+}
+
+const createClipGuidance = ({ source, durationSec, reel, fileName, startSec, endSec, clipIndex, totalClips }) => {
+  const beat = getBeatBlueprint(clipIndex, totalClips)
+  const platformName = reel?.platform === 'youtube' ? 'YouTube Shorts' : reel?.platform || 'the reference reel'
+  const subject = inferClipSubject({ reel, fileName })
+  const peopleNeeded = inferPeopleNeeded({ source, fileName, reel, beat })
+  const label = source === 'original' ? beat.originalLabel : beat.uploadLabel
+
+  return {
+    title: `${label} plan`,
+    label,
+    stage: beat.name,
+    analysis: source === 'original'
+      ? `AI analysis: this ${durationSec}s reference beat is best used to ${beat.goal}. ${beat.originalAnalysis}`
+      : `AI analysis: this ${durationSec}s uploaded beat is best used to ${beat.goal} for ${subject}. ${beat.uploadAnalysis}`,
+    description: source === 'original'
+      ? `Mirror the pacing of this ${platformName} reference clip and translate it into a ${beat.name.toLowerCase()} beat for your own reel.`
+      : `Turn this uploaded clip into the ${beat.name.toLowerCase()} beat for ${subject}. Keep the message readable inside ${durationSec} seconds.`,
+    cameraDirection: source === 'original' ? beat.originalCamera : beat.uploadCamera,
+    thingsNeeded: source === 'original'
+      ? `${beat.originalNeed}, reference product angle, scroll-stopping composition`
+      : `${beat.uploadNeed}, ${subject}, good lighting, usable audio or clean b-roll`,
+    peopleNeeded,
+    notes: `Clip window: ${formatSeconds(startSec)}-${formatSeconds(endSec)}. Suggested overlay: ${beat.overlay}.`,
+    overlaySuggestion: beat.overlay,
+  }
+}
+
+const buildOriginalClips = (reel) => {
+  const totalSeconds = parseDurationToSeconds(reel?.duration)
+  const chunks = splitDurationIntoClips(totalSeconds)
+  let cursor = 0
+
+  return chunks.map((durationSec, index) => {
+    const startSec = cursor
+    const endSec = cursor + durationSec
+    cursor = endSec
+    const guidance = createClipGuidance({
+      source: 'original',
+      durationSec,
+      reel,
+      fileName: reel?.title,
+      startSec,
+      endSec,
+      clipIndex: index,
+      totalClips: chunks.length,
+    })
+
+    return {
+      id: `original-${reel?.id || 'reel'}-clip-${index + 1}`,
+      source: 'original',
+      label: guidance.label,
+      durationSec,
+      startSec,
+      endSec,
+      startPct: (startSec / totalSeconds) * 100,
+      endPct: (endSec / totalSeconds) * 100,
+      previewUrl: reel?.thumbnail,
+      mediaType: 'image',
+      fileName: reel?.title,
+      guidance,
+    }
+  })
+}
+
+const buildUploadAssetClips = ({ assetId, durationSec, previewUrl, fileName, fileType, reel }) => {
+  const totalSeconds = Math.max(1, Math.round(durationSec || 10))
+  const chunks = splitDurationIntoClips(totalSeconds)
+  let cursor = 0
+
+  return chunks.map((clipDuration, index) => {
+    const startSec = cursor
+    const endSec = cursor + clipDuration
+    cursor = endSec
+    const guidance = createClipGuidance({
+      source: 'upload',
+      durationSec: clipDuration,
+      reel,
+      fileName,
+      startSec,
+      endSec,
+      clipIndex: index,
+      totalClips: chunks.length,
+    })
+
+    return {
+      id: `${assetId}-clip-${index + 1}`,
+      assetId,
+      source: 'upload',
+      label: guidance.label,
+      durationSec: clipDuration,
+      localStartSec: startSec,
+      localEndSec: endSec,
+      previewUrl,
+      mediaType: fileType || 'video/mp4',
+      fileName,
+      guidance,
+    }
+  })
+}
+
+const flattenUploadedTrackClips = (uploadedAssets) => {
+  const totalDuration = Math.max(1, uploadedAssets.reduce((sum, asset) => sum + (asset.durationSec || 0), 0))
+  let offsetSeconds = 0
+
+  return uploadedAssets.flatMap(asset => {
+    const assetOffset = offsetSeconds
+    offsetSeconds += asset.durationSec || 0
+
+    return (asset.clips || []).map(clip => ({
+      ...clip,
+      assetName: asset.name,
+      startSec: assetOffset + clip.localStartSec,
+      endSec: assetOffset + clip.localEndSec,
+      startPct: ((assetOffset + clip.localStartSec) / totalDuration) * 100,
+      endPct: ((assetOffset + clip.localEndSec) / totalDuration) * 100,
+      previewUrl: asset.previewUrl,
+    }))
+  })
+}
+
+const getVideoDuration = (file, previewUrl) => new Promise((resolve) => {
+  const video = document.createElement('video')
+  video.preload = 'metadata'
+  video.src = previewUrl || URL.createObjectURL(file)
+  video.onloadedmetadata = () => {
+    resolve(Math.max(1, Math.round(video.duration || 10)))
+  }
+  video.onerror = () => resolve(10)
+})
+
 export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onReelChange, onClose }) {
   const sourceProject = selectedReel?.sourceVideo ? selectedReel : null
   const sourceReel = sourceProject?.sourceVideo || selectedReel
+  const reel = sourceReel
+  const initialOriginalClips = sourceProject?.edits?.originalClips || buildOriginalClips(sourceReel)
+
   const [mode, setMode] = useState('edit')
-  const [activeTool, setActiveTool] = useState('trim')
+  const [activeTool, setActiveTool] = useState('guidance')
   const [isPlaying, setIsPlaying] = useState(false)
-  const [playhead, setPlayhead] = useState(0) // 0-100 percentage
-  const [trimStart, setTrimStart] = useState(sourceProject?.edits?.trimStart ?? 0)
-  const [trimEnd, setTrimEnd] = useState(sourceProject?.edits?.trimEnd ?? 100)
+  const [playhead, setPlayhead] = useState(0)
+  const [originalClips, setOriginalClips] = useState(initialOriginalClips)
+  const [uploadedAssets, setUploadedAssets] = useState(sourceProject?.edits?.uploadedAssets || [])
+  const [selectedClipId, setSelectedClipId] = useState(sourceProject?.edits?.selectedClipId || initialOriginalClips[0]?.id || null)
   const [textOverlays, setTextOverlays] = useState(sourceProject?.edits?.textOverlays || [])
   const [selectedMusic, setSelectedMusic] = useState(sourceProject?.edits?.selectedMusic || null)
   const [selectedFilter, setSelectedFilter] = useState(sourceProject?.edits?.selectedFilter || 'original')
@@ -65,34 +337,96 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   const [history, setHistory] = useState([])
   const [future, setFuture] = useState([])
   const timelineRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const previewVideoRef = useRef(null)
 
-  // Playhead animation
-  useEffect(() => {
-    let interval
-    if (isPlaying) {
-      interval = setInterval(() => {
-        setPlayhead(prev => {
-          if (prev >= trimEnd) { setIsPlaying(false); return trimStart }
-          return prev + 0.5
-        })
-      }, 50)
-    }
-    return () => clearInterval(interval)
-  }, [isPlaying, trimStart, trimEnd])
-
-  const reel = sourceReel
   if (!reel) return null
 
   const currentFilter = filterPresets.find(f => f.id === selectedFilter)
+  const originalDurationSec = Math.max(1, parseDurationToSeconds(reel.duration))
+  const uploadedTrackClips = flattenUploadedTrackClips(uploadedAssets)
+  const totalUploadedDuration = Math.max(1, uploadedAssets.reduce((sum, asset) => sum + (asset.durationSec || 0), 0))
+  const allClips = [...originalClips, ...uploadedTrackClips]
+  const selectedClip = allClips.find(clip => clip.id === selectedClipId) || originalClips[0] || null
+  const activeTimelineDuration = selectedClip?.source === 'upload' ? totalUploadedDuration : originalDurationSec
+  const effectClass = selectedEffect === 'Zoom In'
+    ? 'scale-110'
+    : selectedEffect === 'Zoom Out'
+      ? 'scale-95'
+      : selectedEffect === 'Blur Transition'
+        ? 'blur-[1px]'
+        : ''
+
+  useEffect(() => {
+    if (!selectedClipId && originalClips[0]) {
+      setSelectedClipId(originalClips[0].id)
+      setPlayhead(originalClips[0].startPct)
+    }
+  }, [selectedClipId, originalClips])
+
+  useEffect(() => {
+    if (selectedClipId && !allClips.find(clip => clip.id === selectedClipId)) {
+      setSelectedClipId(originalClips[0]?.id || null)
+    }
+  }, [selectedClipId, allClips, originalClips])
+
+  useEffect(() => {
+    if (!isPlaying || !selectedClip) return undefined
+
+    const clipStart = selectedClip.startPct ?? 0
+    const clipEnd = selectedClip.endPct ?? 100
+    const interval = setInterval(() => {
+      setPlayhead(prev => {
+        const next = prev + 0.6
+        return next >= clipEnd ? clipStart : next
+      })
+    }, 80)
+
+    return () => clearInterval(interval)
+  }, [isPlaying, selectedClip?.id, selectedClip?.startPct, selectedClip?.endPct])
+
+  useEffect(() => {
+    if (!selectedClip || selectedClip.source !== 'upload' || !previewVideoRef.current) return undefined
+
+    const video = previewVideoRef.current
+    const syncVideoPosition = () => {
+      try {
+        video.currentTime = selectedClip.localStartSec || 0
+      } catch {
+        // Ignore browser seek errors for partially loaded local files
+      }
+    }
+
+    if (video.readyState >= 1) {
+      syncVideoPosition()
+    }
+
+    video.addEventListener('loadedmetadata', syncVideoPosition)
+    return () => video.removeEventListener('loadedmetadata', syncVideoPosition)
+  }, [selectedClipId, selectedClip?.source, selectedClip?.localStartSec, selectedClip?.previewUrl])
 
   const captureState = () => {
-    setHistory(prev => [...prev.slice(-19), { trimStart, trimEnd, textOverlays, selectedMusic, selectedFilter, stickers, selectedEffect, volume }])
+    setHistory(prev => [
+      ...prev.slice(-19),
+      {
+        originalClips,
+        uploadedAssets,
+        selectedClipId,
+        textOverlays,
+        selectedMusic,
+        selectedFilter,
+        stickers,
+        selectedEffect,
+        volume,
+      }
+    ])
     setFuture([])
   }
 
   const restoreState = (state) => {
-    setTrimStart(state.trimStart)
-    setTrimEnd(state.trimEnd)
+    setOriginalClips(state.originalClips || buildOriginalClips(reel))
+    setUploadedAssets(state.uploadedAssets || [])
+    setSelectedClipId(state.selectedClipId || state.originalClips?.[0]?.id || buildOriginalClips(reel)[0]?.id || null)
     setTextOverlays(state.textOverlays || [])
     setSelectedMusic(state.selectedMusic || null)
     setSelectedFilter(state.selectedFilter || 'original')
@@ -104,7 +438,17 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   const handleUndo = () => {
     if (history.length === 0) return
     const previous = history[history.length - 1]
-    setFuture(prev => [{ trimStart, trimEnd, textOverlays, selectedMusic, selectedFilter, stickers, selectedEffect, volume }, ...prev])
+    setFuture(prev => [{
+      originalClips,
+      uploadedAssets,
+      selectedClipId,
+      textOverlays,
+      selectedMusic,
+      selectedFilter,
+      stickers,
+      selectedEffect,
+      volume,
+    }, ...prev])
     setHistory(prev => prev.slice(0, -1))
     restoreState(previous)
   }
@@ -112,18 +456,77 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   const handleRedo = () => {
     if (future.length === 0) return
     const next = future[0]
-    setHistory(prev => [...prev, { trimStart, trimEnd, textOverlays, selectedMusic, selectedFilter, stickers, selectedEffect, volume }])
+    setHistory(prev => [...prev, {
+      originalClips,
+      uploadedAssets,
+      selectedClipId,
+      textOverlays,
+      selectedMusic,
+      selectedFilter,
+      stickers,
+      selectedEffect,
+      volume,
+    }])
     setFuture(prev => prev.slice(1))
     restoreState(next)
   }
 
-  const togglePlay = () => setIsPlaying(!isPlaying)
+  const togglePlay = () => {
+    if (!selectedClip) return
+    setIsPlaying(prev => !prev)
+  }
 
-  const handleTimelineClick = (e) => {
-    if (!timelineRef.current) return
-    const rect = timelineRef.current.getBoundingClientRect()
-    const pct = ((e.clientX - rect.left) / rect.width) * 100
-    setPlayhead(Math.max(trimStart, Math.min(trimEnd, pct)))
+  const handleClipSelect = (clip) => {
+    setSelectedClipId(clip.id)
+    setActiveTool('guidance')
+    setPlayhead(clip.startPct ?? 0)
+    setIsPlaying(false)
+  }
+
+  const handleUploadClips = async (e) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+
+    captureState()
+    const uploadedAt = Date.now()
+    const newAssets = await Promise.all(files.map(async (file, index) => {
+      const previewUrl = URL.createObjectURL(file)
+      const durationSec = await getVideoDuration(file, previewUrl)
+      const assetId = `upload-${uploadedAt}-${index}`
+
+      return {
+        id: assetId,
+        name: file.name,
+        type: file.type || 'video/mp4',
+        size: file.size,
+        durationSec,
+        previewUrl,
+        clips: buildUploadAssetClips({
+          assetId,
+          durationSec,
+          previewUrl,
+          fileName: file.name,
+          fileType: file.type,
+          reel,
+        })
+      }
+    }))
+
+    const nextAssets = [...uploadedAssets, ...newAssets]
+    setUploadedAssets(nextAssets)
+    const firstNewClip = flattenUploadedTrackClips(nextAssets).find(clip => clip.id === newAssets[0]?.clips?.[0]?.id)
+    if (firstNewClip) handleClipSelect(firstNewClip)
+    e.target.value = ''
+  }
+
+  const handleRemoveUploadedAsset = (assetId) => {
+    captureState()
+    const remainingAssets = uploadedAssets.filter(asset => asset.id !== assetId)
+    setUploadedAssets(remainingAssets)
+    if (selectedClip?.assetId === assetId) {
+      setSelectedClipId(originalClips[0]?.id || null)
+      setPlayhead(originalClips[0]?.startPct || 0)
+    }
   }
 
   const addTextOverlay = () => {
@@ -161,9 +564,33 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     setStickers(stickers.filter(s => s.id !== id))
   }
 
+  const updateSelectedClipGuidance = (field, value) => {
+    if (!selectedClip) return
+
+    if (selectedClip.source === 'original') {
+      setOriginalClips(prev => prev.map(clip => clip.id === selectedClip.id
+        ? { ...clip, guidance: { ...clip.guidance, [field]: value } }
+        : clip
+      ))
+      return
+    }
+
+    setUploadedAssets(prev => prev.map(asset => asset.id === selectedClip.assetId
+      ? {
+        ...asset,
+        clips: asset.clips.map(clip => clip.id === selectedClip.id
+          ? { ...clip, guidance: { ...clip.guidance, [field]: value } }
+          : clip
+        )
+      }
+      : asset
+    ))
+  }
+
   const currentEdits = () => ({
-    trimStart,
-    trimEnd,
+    originalClips,
+    uploadedAssets,
+    selectedClipId,
     textOverlays,
     selectedMusic,
     selectedFilter,
@@ -177,9 +604,27 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     const res = await submitVideoEdit({
       videoId: reel.id,
       videoUrl: reel.url,
-      trim: { start: trimStart, end: trimEnd },
+      selectedClip: selectedClip ? {
+        id: selectedClip.id,
+        label: selectedClip.label,
+        source: selectedClip.source,
+        fileName: selectedClip.fileName,
+        startSec: selectedClip.localStartSec ?? selectedClip.startSec,
+        endSec: selectedClip.localEndSec ?? selectedClip.endSec,
+        guidance: selectedClip.guidance,
+      } : null,
+      uploadedAssets: uploadedAssets.map(asset => ({
+        id: asset.id,
+        name: asset.name,
+        durationSec: asset.durationSec,
+        clipCount: asset.clips?.length || 0,
+      })),
       textOverlays,
-      text: textOverlays[0] ? { content: textOverlays[0].content, position: textOverlays[0].position, style: { fontSize: textOverlays[0].fontSize, color: textOverlays[0].color } } : null,
+      text: textOverlays[0] ? {
+        content: textOverlays[0].content,
+        position: textOverlays[0].position,
+        style: { fontSize: textOverlays[0].fontSize, color: textOverlays[0].color }
+      } : null,
       music: selectedMusic,
       filter: selectedFilter,
       stickers,
@@ -208,18 +653,15 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     setTimeout(() => setSaveStatus(''), 2000)
   }
 
-  const formatTime = (pct) => {
-    const parts = String(reel.duration || '0:30').split(':').map(Number)
-    const totalSec = parts.length === 2 ? (parts[0] * 60 + parts[1]) : Number(reel.duration) || 30
-    const sec = (pct / 100) * totalSec
-    const m = Math.floor(sec / 60)
-    const s = Math.floor(sec % 60)
-    return `${m}:${s.toString().padStart(2, '0')}`
-  }
+  const formatTimelineTime = (pct) => formatSeconds((pct / 100) * activeTimelineDuration)
+
+  const selectedClipGuidance = selectedClip?.guidance || null
+  const previewLabel = selectedClip?.source === 'upload'
+    ? `${selectedClip.label} · ${selectedClip.assetName || selectedClip.fileName}`
+    : selectedClip?.label || 'Original Clip'
 
   return (
     <div className="fixed inset-0 z-50 bg-[#0a0a0f] flex flex-col">
-      {/* ===== Top Bar ===== */}
       <div className="flex items-center justify-between px-4 py-3 bg-[#12121a] border-b border-white/5 flex-shrink-0">
         <div className="flex items-center gap-4">
           <button onClick={onClose} className="text-slate-400 hover:text-white transition flex items-center gap-1">
@@ -227,7 +669,6 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
             <span className="text-sm hidden sm:inline">Back</span>
           </button>
           <div className="h-6 w-px bg-white/10" />
-          {/* Mode Tabs */}
           <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
             {editorModes.map(m => {
               const Icon = m.icon
@@ -245,7 +686,6 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Undo/Redo */}
           <button onClick={handleUndo} disabled={history.length === 0} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition disabled:opacity-30">
             <Undo2 className="w-4 h-4" />
           </button>
@@ -269,10 +709,8 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
         </div>
       </div>
 
-      {/* ===== Main Content Area ===== */}
       {mode === 'edit' && (
         <div className="flex-1 flex overflow-hidden">
-          {/* Left Tools Panel */}
           <div className="w-16 md:w-20 bg-[#12121a] border-r border-white/5 flex flex-col items-center py-3 gap-1 flex-shrink-0">
             {capcutTools.map(tool => {
               const Icon = tool.icon
@@ -292,21 +730,31 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
             })}
           </div>
 
-          {/* Center Preview */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Preview Window */}
             <div className="flex-1 flex items-center justify-center bg-black/40 p-4 min-h-0">
-              <div className="relative aspect-[9/16] max-h-full rounded-lg overflow-hidden shadow-2xl" style={{ maxHeight: 'calc(100vh - 280px)' }}>
-                <img
-                  src={reel.thumbnail}
-                  alt={reel.title}
-                  className={`h-full w-full object-cover ${selectedEffect === 'Zoom In' ? 'scale-110' : selectedEffect === 'Zoom Out' ? 'scale-95' : selectedEffect === 'Blur Transition' ? 'blur-[1px]' : ''}`}
-                  style={currentFilter?.style}
-                />
+              <div className="relative aspect-[9/16] w-full max-w-sm max-h-full rounded-lg overflow-hidden shadow-2xl bg-black" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+                {selectedClip?.source === 'upload' && selectedClip.previewUrl ? (
+                  <video
+                    ref={previewVideoRef}
+                    src={selectedClip.previewUrl}
+                    controls
+                    muted
+                    className={`h-full w-full object-cover ${effectClass}`}
+                    style={currentFilter?.style}
+                  />
+                ) : (
+                  <img
+                    src={reel.thumbnail}
+                    alt={reel.title}
+                    className={`h-full w-full object-cover ${effectClass}`}
+                    style={currentFilter?.style}
+                  />
+                )}
+
                 {selectedEffect === 'Glitch' && <div className="absolute inset-0 bg-cyan-400/10 mix-blend-screen translate-x-1 pointer-events-none" />}
                 {selectedEffect === 'Flash' && <div className="absolute inset-0 bg-white/20 animate-pulse pointer-events-none" />}
                 {selectedEffect === 'Shake' && <div className="absolute inset-0 border-4 border-red-400/20 animate-pulse pointer-events-none" />}
-                {/* Text Overlays */}
+
                 {textOverlays.map(t => {
                   const isVisible = playhead >= t.startTime && playhead <= t.endTime
                   if (!isVisible) return null
@@ -320,7 +768,7 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                     </div>
                   )
                 })}
-                {/* Sticker Overlays */}
+
                 {stickers.map(s => {
                   const isVisible = playhead >= s.startTime && playhead <= s.endTime
                   if (!isVisible) return null
@@ -335,77 +783,102 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                     </button>
                   )
                 })}
-                {/* Platform Badge */}
-                <span className={`platform-badge platform-${reel.platform} absolute top-2 left-2`}>
-                  {reel.platform}
-                </span>
+
+                <div className="absolute left-2 top-2 flex items-center gap-2">
+                  <span className={`platform-badge platform-${reel.platform}`}>{selectedClip?.source === 'upload' ? 'Uploaded clip' : reel.platform === 'youtube' ? 'YouTube Shorts' : reel.platform}</span>
+                  {selectedClip && <span className="px-2 py-1 rounded-full bg-black/60 text-[10px] text-white">{selectedClip.label}</span>}
+                </div>
+
+                <div className="absolute left-3 right-3 bottom-3 rounded-xl bg-black/60 border border-white/10 p-3 text-white backdrop-blur-sm">
+                  <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.2em] text-slate-300">
+                    <span>{selectedClip?.source === 'upload' ? 'Uploaded clip' : 'Original reference'}</span>
+                    <span>{selectedClip ? `${formatSeconds(selectedClip.localStartSec ?? selectedClip.startSec)}-${formatSeconds(selectedClip.localEndSec ?? selectedClip.endSec)}` : '0:00-0:00'}</span>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold">{previewLabel}</p>
+                  <p className="mt-1 text-xs text-slate-300 line-clamp-2">{selectedClipGuidance?.description || 'Select a clip from the timeline to preview it here.'}</p>
+                </div>
               </div>
             </div>
 
-            {/* Playback Controls */}
             <div className="flex items-center justify-center gap-4 py-2 bg-[#12121a] border-t border-white/5">
-              <span className="text-xs text-slate-400 font-mono">{formatTime(playhead)}</span>
+              <span className="text-xs text-slate-400 font-mono">{formatTimelineTime(playhead)}</span>
               <button
                 onClick={togglePlay}
                 className="w-10 h-10 rounded-full bg-brand-600 hover:bg-brand-700 flex items-center justify-center transition"
               >
                 {isPlaying ? <Pause className="w-4 h-4 text-white" /> : <Play className="w-4 h-4 text-white ml-0.5" fill="white" />}
               </button>
-              <span className="text-xs text-slate-400 font-mono">{formatTime(trimEnd)}</span>
+              <span className="text-xs text-slate-400 font-mono">{formatTimelineTime(selectedClip?.endPct ?? 100)}</span>
             </div>
 
-            {/* Timeline */}
-            <div className="bg-[#0e0e14] border-t border-white/5 p-3">
-              {/* Time ruler */}
-              <div className="flex justify-between text-[9px] text-slate-600 mb-1 px-1">
-                {[0, 25, 50, 75, 100].map(p => <span key={p}>{formatTime(p)}</span>)}
+            <div className="bg-[#0e0e14] border-t border-white/5 p-3 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-white">Clip Timeline</p>
+                  <p className="text-[10px] text-slate-500">First track is the reference video. Add uploaded clips one by one and each clip is auto-split into short beats.</p>
+                </div>
+                <>
+                  <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleUploadClips} />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3.5 h-3.5" /> Upload clip
+                  </button>
+                </>
               </div>
-              {/* Tracks */}
-              <div ref={timelineRef} className="relative cursor-pointer" onClick={handleTimelineClick}>
-                {/* Video Track */}
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[9px] text-slate-500 w-10 text-right">Video</span>
-                  <div className="flex-1 h-10 bg-white/5 rounded relative overflow-hidden">
-                    {/* Clip */}
-                    <div
-                      className="absolute inset-y-0 rounded overflow-hidden"
-                      style={{ left: `${trimStart}%`, width: `${trimEnd - trimStart}%` }}
-                    >
-                      <img src={reel.thumbnail} alt="" className="w-full h-full object-cover opacity-80" />
-                      {/* Trim handles */}
-                      <div
-                        className="absolute left-0 inset-y-0 w-2 bg-brand-500 cursor-w-resize"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const onMove = (ev) => {
-                            const rect = timelineRef.current.getBoundingClientRect()
-                            const pct = Math.max(0, Math.min(trimEnd - 5, ((ev.clientX - rect.left) / rect.width) * 100))
-                            setTrimStart(pct)
-                          }
-                          window.addEventListener('mousemove', onMove)
-                          window.addEventListener('mouseup', () => window.removeEventListener('mousemove', onMove), { once: true })
-                        }}
-                      />
-                      <div
-                        className="absolute right-0 inset-y-0 w-2 bg-brand-500 cursor-e-resize"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const onMove = (ev) => {
-                            const rect = timelineRef.current.getBoundingClientRect()
-                            const pct = Math.min(100, Math.max(trimStart + 5, ((ev.clientX - rect.left) / rect.width) * 100))
-                            setTrimEnd(pct)
-                          }
-                          window.addEventListener('mousemove', onMove)
-                          window.addEventListener('mouseup', () => window.removeEventListener('mousemove', onMove), { once: true })
-                        }}
-                      />
-                    </div>
+
+              <div className="flex justify-between text-[9px] text-slate-600 mb-1 px-1">
+                {[0, 25, 50, 75, 100].map(p => <span key={p}>{formatTimelineTime(p)}</span>)}
+              </div>
+
+              <div ref={timelineRef} className="relative space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] text-slate-500 w-14 text-right">Original</span>
+                  <div className="flex-1 h-12 bg-white/5 rounded relative overflow-hidden border border-white/5">
+                    {originalClips.map(clip => (
+                      <button
+                        key={clip.id}
+                        onClick={() => handleClipSelect(clip)}
+                        className={`absolute inset-y-1 rounded-md overflow-hidden border text-left ${selectedClip?.id === clip.id ? 'border-brand-400 ring-1 ring-brand-400/60' : 'border-white/10 hover:border-white/30'}`}
+                        style={{ left: `${clip.startPct}%`, width: `${clip.endPct - clip.startPct}%` }}
+                      >
+                        <img src={reel.thumbnail} alt="" className="w-full h-full object-cover opacity-70" />
+                        <div className="absolute inset-0 bg-gradient-to-r from-black/70 to-black/20 p-2 flex flex-col justify-between">
+                          <span className="text-[10px] font-semibold text-white truncate">{clip.label}</span>
+                          <span className="text-[9px] text-slate-200">{clip.durationSec}s</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {/* Audio Track */}
+                <div className="flex items-start gap-2">
+                  <span className="text-[9px] text-slate-500 w-14 text-right pt-2">Uploads</span>
+                  <div className="flex-1 min-h-12 bg-white/5 rounded relative overflow-hidden border border-white/5 px-1 py-1">
+                    {uploadedTrackClips.length > 0 ? (
+                      uploadedTrackClips.map(clip => (
+                        <button
+                          key={clip.id}
+                          onClick={() => handleClipSelect(clip)}
+                          className={`absolute inset-y-1 rounded-md px-2 py-1 border text-left ${selectedClip?.id === clip.id ? 'border-emerald-400 ring-1 ring-emerald-400/60 bg-emerald-500/20' : 'border-white/10 bg-emerald-500/10 hover:border-white/30'}`}
+                          style={{ left: `${clip.startPct}%`, width: `${Math.max(clip.endPct - clip.startPct, 8)}%` }}
+                        >
+                          <span className="block text-[10px] font-semibold text-white truncate">{clip.label}</span>
+                          <span className="block text-[9px] text-emerald-200 truncate">{clip.assetName || clip.fileName}</span>
+                          <span className="block text-[9px] text-slate-300">{clip.durationSec}s</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="h-10 rounded border border-dashed border-white/10 flex items-center justify-center text-[10px] text-slate-500">
+                        Upload a clip and the editor will split it into short beats automatically.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[9px] text-slate-500 w-10 text-right">Audio</span>
+                  <span className="text-[9px] text-slate-500 w-14 text-right">Audio</span>
                   <div className="flex-1 h-6 bg-white/5 rounded flex items-center px-2 gap-1">
                     {selectedMusic ? (
                       <>
@@ -418,10 +891,9 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                   </div>
                 </div>
 
-                {/* Text Track */}
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[9px] text-slate-500 w-10 text-right">Text</span>
-                  <div className="flex-1 h-6 bg-white/5 rounded relative">
+                  <span className="text-[9px] text-slate-500 w-14 text-right">Text</span>
+                  <div className="flex-1 h-6 bg-white/5 rounded relative overflow-hidden">
                     {textOverlays.map(t => (
                       <div
                         key={t.id}
@@ -435,18 +907,16 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                   </div>
                 </div>
 
-                {/* Filter Track */}
                 <div className="flex items-center gap-2">
-                  <span className="text-[9px] text-slate-500 w-10 text-right">Filter</span>
+                  <span className="text-[9px] text-slate-500 w-14 text-right">Filter</span>
                   <div className="flex-1 h-6 bg-white/5 rounded flex items-center px-2">
                     <span className="text-[10px] text-slate-400">{currentFilter?.name || 'Original'}</span>
                   </div>
                 </div>
 
-                {/* Playhead */}
                 <div
                   className="absolute top-0 bottom-0 w-0.5 bg-white pointer-events-none"
-                  style={{ left: `calc(${playhead}% + 2.5rem)`, height: '100%' }}
+                  style={{ left: `calc(${playhead}% + 3.5rem)`, height: '100%' }}
                 >
                   <div className="absolute -top-1 -left-1.5 w-3 h-3 rounded-full bg-white" />
                 </div>
@@ -454,26 +924,116 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
             </div>
           </div>
 
-          {/* Right Properties Panel */}
-          <div className="w-64 bg-[#12121a] border-l border-white/5 overflow-y-auto flex-shrink-0">
-            {activeTool === 'trim' && (
-              <div className="p-4 space-y-3">
-                <h3 className="text-sm font-semibold text-white mb-2">Trim Video</h3>
-                <div>
-                  <label className="text-xs text-slate-400">Start: {formatTime(trimStart)}</label>
-                  <input type="range" min="0" max="100" value={trimStart} onMouseDown={captureState} onChange={e => setTrimStart(Math.min(parseInt(e.target.value), trimEnd - 5))} className="w-full accent-brand-500" />
+          <div className="w-72 bg-[#12121a] border-l border-white/5 overflow-y-auto flex-shrink-0">
+            {activeTool === 'guidance' && (
+              <div className="p-4 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">AI Clip Guidelines</h3>
+                    <p className="text-[10px] text-slate-500">Each reference beat and uploaded beat gets its own AI analysis, video role, and shooting notes.</p>
+                  </div>
+                  <button onClick={() => fileInputRef.current?.click()} className="px-2.5 py-1.5 rounded bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1">
+                    <Upload className="w-3 h-3" /> Add clip
+                  </button>
                 </div>
-                <div>
-                  <label className="text-xs text-slate-400">End: {formatTime(trimEnd)}</label>
-                  <input type="range" min="0" max="100" value={trimEnd} onMouseDown={captureState} onChange={e => setTrimEnd(Math.max(parseInt(e.target.value), trimStart + 5))} className="w-full accent-brand-500" />
-                </div>
-                <div className="grid grid-cols-4 gap-1">
-                  {[0, 25, 50, 75].map(p => (
-                    <button key={p} onClick={() => { captureState(); setTrimStart(p); setTrimEnd(p + 25) }} className="py-1 rounded bg-white/5 hover:bg-white/10 text-[10px] text-slate-400">
-                      {p}%
-                    </button>
-                  ))}
-                </div>
+
+                {selectedClip ? (
+                  <>
+                    <div className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-white">{selectedClip.label}</span>
+                        <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400">{selectedClip.source}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">{selectedClip.assetName || selectedClip.fileName || reel.title}</p>
+                      <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400">
+                        <div className="rounded-lg bg-black/20 px-2 py-1.5">Stage: <span className="text-white">{selectedClipGuidance?.stage || 'Beat'}</span></div>
+                        <div className="rounded-lg bg-black/20 px-2 py-1.5">Duration: <span className="text-white">{selectedClip.durationSec}s</span></div>
+                        <div className="rounded-lg bg-black/20 px-2 py-1.5 col-span-2">Range: <span className="text-white">{formatSeconds(selectedClip.localStartSec ?? selectedClip.startSec)}-{formatSeconds(selectedClip.localEndSec ?? selectedClip.endSec)}</span></div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-brand-500/20 bg-brand-500/10 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] uppercase tracking-[0.2em] text-brand-200">AI analysis</span>
+                        <span className="text-[10px] text-brand-100">{selectedClipGuidance?.title}</span>
+                      </div>
+                      <p className="text-xs text-slate-200">{selectedClipGuidance?.analysis}</p>
+                      <div className="rounded-lg bg-black/20 px-2 py-2 text-[11px] text-slate-300">
+                        Suggested overlay: <span className="text-white">{selectedClipGuidance?.overlaySuggestion || 'Keep the caption short and readable'}</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400">Clip description</label>
+                      <textarea
+                        value={selectedClipGuidance?.description || ''}
+                        onChange={e => updateSelectedClipGuidance('description', e.target.value)}
+                        className="mt-1 w-full min-h-20 rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-xs text-white"
+                        placeholder="Describe what should happen in this clip"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400">Camera direction</label>
+                      <textarea
+                        value={selectedClipGuidance?.cameraDirection || ''}
+                        onChange={e => updateSelectedClipGuidance('cameraDirection', e.target.value)}
+                        className="mt-1 w-full min-h-20 rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-xs text-white"
+                        placeholder="Example: Pan the camera from left to right"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400">Things needed</label>
+                      <textarea
+                        value={selectedClipGuidance?.thingsNeeded || ''}
+                        onChange={e => updateSelectedClipGuidance('thingsNeeded', e.target.value)}
+                        className="mt-1 w-full min-h-16 rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-xs text-white"
+                        placeholder="Props, lighting, product, background, wardrobe"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400">Amount of people needed</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={selectedClipGuidance?.peopleNeeded ?? 1}
+                        onChange={e => updateSelectedClipGuidance('peopleNeeded', parseInt(e.target.value || '0', 10))}
+                        className="mt-1 w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-xs text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400">Extra notes</label>
+                      <textarea
+                        value={selectedClipGuidance?.notes || ''}
+                        onChange={e => updateSelectedClipGuidance('notes', e.target.value)}
+                        className="mt-1 w-full min-h-20 rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-xs text-white"
+                        placeholder="Tell the editor what makes this shot useful"
+                      />
+                    </div>
+
+                    {uploadedAssets.length > 0 && (
+                      <div className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-2">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Uploaded files</p>
+                        {uploadedAssets.map(asset => (
+                          <div key={asset.id} className="flex items-center justify-between gap-2 rounded-lg bg-black/20 px-2 py-2">
+                            <div className="min-w-0">
+                              <p className="text-xs text-white truncate">{asset.name}</p>
+                              <p className="text-[10px] text-slate-500">{asset.durationSec}s · {asset.clips?.length || 0} clips</p>
+                            </div>
+                            <button onClick={() => handleRemoveUploadedAsset(asset.id)} className="text-red-400 hover:text-red-300">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-500">Choose a clip from the timeline to fill out the guideline panel.</p>
+                )}
               </div>
             )}
 
@@ -606,7 +1166,6 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
               </div>
             )}
 
-            {/* Apply Button */}
             <div className="p-4 sticky bottom-0 bg-[#12121a] border-t border-white/5">
               <button
                 onClick={handleApplyEdits}
@@ -626,17 +1185,14 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
         </div>
       )}
 
-      {/* Generate Mode */}
       {mode === 'generate' && (
         <GenerateMode reel={reel} brandInfo={brandInfo} onClose={onClose} />
       )}
 
-      {/* Remix Mode */}
       {mode === 'remix' && (
         <RemixMode brandInfo={brandInfo} reel={reel} onSavePlan={handleSaveProject} />
       )}
 
-      {/* Export Modal */}
       {showExport && (
         <ExportModal reel={reel} onClose={() => setShowExport(false)} edits={currentEdits()} onSavedExport={async (lastExport) => {
           const saved = await saveProject({
@@ -910,7 +1466,9 @@ function ExportModal({ reel, onClose, edits, onSavedExport }) {
               ))}
             </div>
             <div className="text-xs text-slate-500 mb-4 space-y-1">
-              <p>Trim: {edits.trimStart}% - {edits.trimEnd}%</p>
+              <p>Original clips: {edits.originalClips?.length || 0}</p>
+              <p>Uploaded clips: {(edits.uploadedAssets || []).reduce((sum, asset) => sum + (asset.clips?.length || 0), 0)}</p>
+              <p>Selected clip: {edits.selectedClipId || 'None'}</p>
               <p>Text overlays: {edits.textOverlays.length}</p>
               <p>Music: {edits.selectedMusic ? 'Selected' : 'None'}</p>
               <p>Filter: {edits.selectedFilter}</p>

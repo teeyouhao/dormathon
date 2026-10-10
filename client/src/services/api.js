@@ -181,7 +181,7 @@ function buildLocalRemixPlan(reel, brandInfo, files, preferences) {
       'Scene 4 (10-13s): Add proof: transformation, result, testimonial, or fast montage',
       'Scene 5 (13-15s): End with CTA, logo, handle, and platform-safe captions'
     ],
-    features: ['Auto-subtitles', `${duration} 9:16 cut`, `${style} pacing`, `${fileCount} uploaded file(s) analyzed`, 'Platform export plan for TikTok, Instagram, YouTube'],
+    features: ['Auto-subtitles', `${duration} 9:16 cut`, `${style} pacing`, `${fileCount} uploaded file(s) analyzed`, 'Platform export plan for TikTok, Instagram, YouTube Shorts'],
     duration,
     style
   }

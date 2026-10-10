@@ -9,7 +9,7 @@ import SettingsPage from './components/Settings'
 import Projects from './components/Projects'
 
 const tabs = [
-  { id: 'trending', label: 'Trending Feed', icon: Flame, description: 'Live trending reels from YouTube, Instagram & TikTok' },
+  { id: 'trending', label: 'Trending Feed', icon: Flame, description: 'Live trending reels from YouTube Shorts, Instagram & TikTok' },
   { id: 'projects', label: 'Projects', icon: FolderOpen, description: 'Saved reel projects and exports' },
   { id: 'settings', label: 'Settings', icon: Settings, description: 'Configure API keys, scraping, AI and backend options' }
 ]
