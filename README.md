@@ -1,7 +1,7 @@
 # TrendWise — AI Trending Reels Generator for SMEs
 
-**Deployed Web Link
-**https://dormathon-zeta.vercel.app/
+**Deployed Web Link**
+https://dormathon-zeta.vercel.app/
 
 Help small and medium enterprises (SMEs) get exposure by finding trending short-form video patterns on YouTube, Instagram and TikTok, then adapting them into ready-to-post vertical reels.
 
