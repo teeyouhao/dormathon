@@ -144,9 +144,49 @@ Return a JSON object with: title (a catchy hook), script (full scene-by-scene sc
       })
       const result = JSON.parse(completion.choices[0].message.content)
       result.inspiration = trendingVideo ? `Inspired by "${trendingVideo.title}" (${formatViews(trendingVideo.views)} views on ${trendingVideo.platform})` : ''
+      result.aiProvider = 'OpenAI (GPT-4)'
       return result
     } catch (err) {
       console.warn('[AI] OpenAI error, using local fallback:', err.message)
+    }
+  }
+
+  // Try Gemini if configured
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai')
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-1.5-flash',
+        generationConfig: { responseMimeType: 'application/json' }
+      })
+      const prompt = `You are a viral social media content strategist. Create a viral reel concept for a ${businessType} in the ${industry} industry named "${brandName}".
+
+Source trending video:
+- Title: ${trendingVideo?.title}
+- Platform: ${trendingVideo?.platform}
+- Views: ${trendingVideo?.views}
+- Likes: ${trendingVideo?.likes}
+- Tags: ${(trendingVideo?.tags || []).join(', ')}
+
+Return a JSON object with:
+- title: string (a catchy hook)
+- script: string (full scene-by-scene script)
+- structure: string (e.g. "Hook (0-3s) -> Problem (3-6s) -> Solution (6-10s) -> CTA (10-15s)")
+- hashtags: string (space-separated hashtags)
+- music: string (music recommendation)
+- duration: string (e.g. "15s")
+- viralityScore: number (0-100)
+- tips: array of 5 strings (viral tips)`
+      
+      const response = await model.generateContent(prompt)
+      const text = response.response.text()
+      const result = JSON.parse(text)
+      result.inspiration = trendingVideo ? `Inspired by "${trendingVideo.title}" (${formatViews(trendingVideo.views)} views on ${trendingVideo.platform})` : ''
+      result.aiProvider = 'Google Gemini (gemini-1.5-flash)'
+      return result
+    } catch (err) {
+      console.warn('[AI] Gemini error, using fallback:', err.message)
     }
   }
 
@@ -187,6 +227,60 @@ Return a JSON object with: title (a catchy hook), script (full scene-by-scene sc
       ? `Inspired by "${trendingVideo.title}" (${formatViews(trendingVideo.views)} views on ${trendingVideo.platform})`
       : ''
   }
+}
+
+export async function generateRemixPlan({ reel, brandInfo, files, preferences }) {
+  const duration = preferences?.duration || '15 seconds'
+  const style = preferences?.style || 'Match trending pattern'
+  const brand = brandInfo?.brandName || 'your brand'
+  const basePlan = {
+    scenes: [
+      `Scene 1 (0-3s): Use the strongest uploaded clip with a hook inspired by "${reel?.title || 'the selected trend'}"`,
+      'Scene 2 (3-6s): Show the customer problem, before-state, or attention-grabbing context',
+      `Scene 3 (6-10s): Reveal how ${brand} solves the problem with a fast visual transition`,
+      'Scene 4 (10-13s): Add proof — customer reaction, result, testimonial, or before/after',
+      'Scene 5 (13-15s): End with CTA, logo/handle, and platform-safe captions'
+    ],
+    features: [
+      'Auto-subtitle plan',
+      `${duration} vertical 9:16 cut`,
+      `${style} pacing`,
+      `${files?.length || 0} uploaded file(s) analyzed`,
+      'Export plan for TikTok, Instagram Reels, and YouTube Shorts'
+    ],
+    duration,
+    style,
+    sourceTrend: reel?.id || null
+  }
+
+  const prompt = `You are an expert video editor. Generate a remix plan for a ${duration} reel in the style of "${style}" for ${brand}.
+Source Trend: ${reel?.title || 'None'}
+Return JSON with 'scenes' (array of strings, each describing a scene's timing and visual action) and 'features' (array of 5 technical feature strings).`
+
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const openai = (await import('openai')).default
+      const client = new openai({ apiKey: process.env.OPENAI_API_KEY })
+      const completion = await client.chat.completions.create({
+        model: 'gpt-4',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' }
+      })
+      const result = JSON.parse(completion.choices[0].message.content)
+      return { ...basePlan, scenes: result.scenes || basePlan.scenes, features: result.features || basePlan.features, aiProvider: 'OpenAI (GPT-4)' }
+    } catch {}
+  }
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai')
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash', generationConfig: { responseMimeType: 'application/json' } })
+      const response = await model.generateContent(prompt)
+      const result = JSON.parse(response.response.text())
+      return { ...basePlan, scenes: result.scenes || basePlan.scenes, features: result.features || basePlan.features, aiProvider: 'Google Gemini' }
+    } catch {}
+  }
+  return basePlan
 }
 
 function getCategoryId(industry) {

@@ -37,12 +37,12 @@ export default function TrendingFeed({ onSelectReel }) {
   const [feedInfo, setFeedInfo] = useState({ source: null, message: '', warnings: [] })
   const requestSequence = useRef(0)
 
-  const loadTrending = useCallback(async () => {
+  const loadTrending = useCallback(async (isRefresh = false) => {
     const requestId = ++requestSequence.current
     setLoading(true)
     setFeedInfo({ source: null, message: '', warnings: [] })
     try {
-      const data = await fetchTrending(platform, region, industry)
+      const data = await fetchTrending(platform, region, industry, isRefresh === true)
       if (requestId !== requestSequence.current) return
       setVideos(Array.isArray(data) ? data : data?.data || [])
       setFeedInfo({
@@ -60,7 +60,7 @@ export default function TrendingFeed({ onSelectReel }) {
   }, [platform, region, industry])
 
   useEffect(() => {
-    loadTrending()
+    loadTrending(false)
     return () => { requestSequence.current += 1 }
   }, [loadTrending])
 
@@ -105,15 +105,6 @@ export default function TrendingFeed({ onSelectReel }) {
   const displayedVideos = platform === 'all' || platform === 'instagram'
     ? pinReferenceReel(filtered)
     : filtered
-
-  const source = (feedInfo.source || '').toLowerCase()
-  const sourceNotice = /demo|mock/.test(source)
-    ? 'Demo data — not live platform results.'
-    : /local/.test(source)
-      ? 'Local data — not a live platform fetch.'
-      : /live|api|scraper/.test(source)
-        ? 'Live provider data (may be cached).'
-        : source ? 'Provider data.' : 'Data source not reported.'
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -175,7 +166,7 @@ export default function TrendingFeed({ onSelectReel }) {
           <option value="shares" className="bg-slate-800">Most Shared</option>
         </select>
         <button
-          onClick={loadTrending}
+          onClick={() => loadTrending(true)}
           disabled={loading}
           className="px-4 py-2.5 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -184,25 +175,19 @@ export default function TrendingFeed({ onSelectReel }) {
         </button>
       </div>
 
-      <div className="mb-4 space-y-2">
-        {(platform === 'all' || platform === 'instagram') && (
-          <p className="text-xs text-slate-400">Instagram hashtag feeds are global, not country-targeted. The country filter does not target Instagram results.</p>
-        )}
-        {!loading && (
-          <div className="glass rounded-lg p-3 text-xs text-slate-300 space-y-1" role="status">
-            <p>{sourceNotice}{feedInfo.source && <span className="text-slate-400"> Source: {feedInfo.source}</span>}</p>
-            {feedInfo.message && <p>{feedInfo.message}</p>}
-            {feedInfo.warnings.length > 0 && (
-              <div className="text-amber-300">
-                <p className="font-medium">Provider warnings</p>
-                <ul className="list-disc pl-4 space-y-1">
-                  {feedInfo.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {!loading && (feedInfo.message || feedInfo.warnings.length > 0) && (
+        <div className="mb-4 glass rounded-lg p-3 text-xs text-slate-300 space-y-1" role="status">
+          {feedInfo.message && <p>{feedInfo.message}</p>}
+          {feedInfo.warnings.length > 0 && (
+            <div className="text-amber-300">
+              <p className="font-medium">Provider warnings</p>
+              <ul className="list-disc pl-4 space-y-1">
+                {feedInfo.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

@@ -224,11 +224,12 @@ export default function SettingsPage() {
           <option value="local" className="bg-slate-800">Local Fallback (No API key needed)</option>
           <option value="openai" className="bg-slate-800">OpenAI GPT-4</option>
           <option value="anthropic" className="bg-slate-800">Anthropic Claude</option>
+          <option value="gemini" className="bg-slate-800">Google Gemini</option>
         </select>
         {settings.ai.provider !== 'local' && (
           <input
             type="password"
-            placeholder={`Enter ${settings.ai.provider === 'openai' ? 'OpenAI' : 'Anthropic'} API Key`}
+            placeholder={`Enter ${settings.ai.provider === 'openai' ? 'OpenAI' : settings.ai.provider === 'gemini' ? 'Gemini' : 'Anthropic'} API Key`}
             value={settings.ai.apiKey}
             onChange={e => setSettings({ ...settings, ai: { ...settings.ai, apiKey: e.target.value } })}
             className="w-full px-3 py-2.5 rounded-lg bg-white/5 border border-brand-500/10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-brand-500/40"

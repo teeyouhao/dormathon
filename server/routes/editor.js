@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { processVideoEdit, exportVideo } from '../services/videoEditor.js'
+import { generateRemixPlan } from '../services/aiService.js'
 
 const router = Router()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -24,30 +25,7 @@ function writeProjects(projects) {
   fs.writeFileSync(projectsFile, JSON.stringify(projects, null, 2))
 }
 
-function buildRemixPlan({ reel, brandInfo, files, preferences }) {
-  const duration = preferences?.duration || '15 seconds'
-  const style = preferences?.style || 'Match trending pattern'
-  const brand = brandInfo?.brandName || 'your brand'
-  return {
-    scenes: [
-      `Scene 1 (0-3s): Use the strongest uploaded clip with a hook inspired by "${reel?.title || 'the selected trend'}"`,
-      'Scene 2 (3-6s): Show the customer problem, before-state, or attention-grabbing context',
-      `Scene 3 (6-10s): Reveal how ${brand} solves the problem with a fast visual transition`,
-      'Scene 4 (10-13s): Add proof — customer reaction, result, testimonial, or before/after',
-      'Scene 5 (13-15s): End with CTA, logo/handle, and platform-safe captions'
-    ],
-    features: [
-      'Auto-subtitle plan',
-      `${duration} vertical 9:16 cut`,
-      `${style} pacing`,
-      `${files?.length || 0} uploaded file(s) analyzed`,
-      'Export plan for TikTok, Instagram Reels, and YouTube Shorts'
-    ],
-    duration,
-    style,
-    sourceTrend: reel?.id || null
-  }
-}
+
 
 // GET /api/editor/projects
 router.get('/projects', (req, res) => {
@@ -79,16 +57,23 @@ router.delete('/projects/:id', (req, res) => {
 })
 
 // POST /api/editor/remix
-router.post('/remix', (req, res) => {
+router.post('/remix', async (req, res) => {
   const { reel, brandInfo, files = [], preferences = {} } = req.body
   if (!reel && files.length === 0) {
     return res.status(400).json({ error: 'A source reel or uploaded files are required' })
   }
-  res.json({
-    success: true,
-    message: 'AI remix plan generated',
-    plan: buildRemixPlan({ reel, brandInfo, files, preferences })
-  })
+  
+  try {
+    const plan = await generateRemixPlan({ reel, brandInfo, files, preferences })
+    res.json({
+      success: true,
+      message: 'AI remix plan generated',
+      plan
+    })
+  } catch (err) {
+    console.error('[Editor] Remix plan error:', err)
+    res.status(500).json({ error: 'Failed to generate remix plan', details: err.message })
+  }
 })
 
 // POST /api/editor/edit

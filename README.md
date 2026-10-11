@@ -1,4 +1,4 @@
-# ViralReels — AI Trending Reels Generator for SMEs
+# TrendWise — AI Trending Reels Generator for SMEs
 
 > Dormathon_Ctrl-C-V_77 · Dormathon let's go
 

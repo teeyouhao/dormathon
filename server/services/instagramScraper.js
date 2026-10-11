@@ -132,9 +132,9 @@ export function createInstagramFetcher({ fetchImpl = globalThis.fetch, getEnv = 
       return structuredClone(result.data.slice(0, maxResults))
     }
 
-    // Region/industry/display-limit changes never start a second identical paid run.
-    if (cache?.key === key && cache.expiresAt > now()) return copy(cache.result)
-    if (failure?.key === key && failure.retryAt > now()) throw failure.error
+    // Region/industry/display-limit changes never start a second identical paid run unless force is requested.
+    if (!options.force && cache?.key === key && cache.expiresAt > now()) return copy(cache.result)
+    if (!options.force && failure?.key === key && failure.retryAt > now()) throw failure.error
     if (inFlight) {
       // Even configuration changes cannot launch parallel billable runs in this process.
       const pending = inFlight

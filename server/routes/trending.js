@@ -57,9 +57,10 @@ function filterByIndustry(videos, industry) {
   })
 }
 
-// GET /api/trending?platform=all&region=SG&industry=fnb
+// GET /api/trending?platform=all&region=SG&industry=fnb&refresh=true
 router.get('/', async (req, res) => {
-  const { platform = 'all', region = 'all', industry = 'all' } = req.query
+  const { platform = 'all', region = 'all', industry = 'all', refresh } = req.query
+  const isRefresh = refresh === 'true' || refresh === true || refresh === '1'
 
   try {
     const results = []
@@ -74,7 +75,11 @@ router.get('/', async (req, res) => {
     if (platform === 'all' || platform === 'instagram') {
       if (process.env.INSTAGRAM_SCRAPING_ENABLED === 'true') {
         try {
-          const igReels = await fetchInstagramTrending({ maxResults: 10, onWarning: warning => warnings.push(warning) })
+          const igReels = await fetchInstagramTrending({
+            maxResults: 10,
+            force: isRefresh,
+            onWarning: warning => warnings.push(warning)
+          })
           if (igReels?.length) results.push(...igReels)
           else warnings.push('Instagram: no playable clips were returned for the selected hashtags/date window. Hashtag reels support depends on the Actor; no other input mode was used.')
         } catch (error) {
@@ -91,7 +96,14 @@ router.get('/', async (req, res) => {
     }
 
     if (results.length === 0) {
-      const filtered = filterByIndustry(filterByPlatform(localizeMockVideos(mockTrendingVideos, region), platform), industry)
+      let filtered = filterByIndustry(filterByPlatform(localizeMockVideos(mockTrendingVideos, region), platform), industry)
+      if (isRefresh) {
+        filtered = filtered.map(v => ({
+          ...v,
+          views: v.views ? Math.round(v.views * (0.95 + Math.random() * 0.1)) : v.views,
+          likes: v.likes ? Math.round(v.likes * (0.95 + Math.random() * 0.1)) : v.likes
+        }))
+      }
       const storage = await upsertReels(filtered, { source: 'mock', region, industry })
       return res.json({
         data: filtered,

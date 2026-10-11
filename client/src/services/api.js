@@ -12,9 +12,14 @@ function localTrendingFallback(platform = 'all', region = 'all') {
   return data
 }
 
-export async function fetchTrending(platform = 'all', region = 'all', industry = 'all') {
+export async function fetchTrending(platform = 'all', region = 'all', industry = 'all', refresh = false) {
   try {
-    const res = await axios.get(`${API_BASE}/trending`, { params: { platform, region, industry } })
+    const params = { platform, region, industry }
+    if (refresh) {
+      params.refresh = 'true'
+      params._t = Date.now()
+    }
+    const res = await axios.get(`${API_BASE}/trending`, { params })
     return res.data
   } catch (err) {
     console.warn('[API] Falling back to local data for trending:', err.message)

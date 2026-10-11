@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import {
   Flame, Settings, Sparkles, Menu, X,
-  FolderOpen, User, LogOut, Mail, Building2
+  FolderOpen, User, LogOut, Mail, Building2, HelpCircle
 } from 'lucide-react'
 import TrendingFeed from './components/TrendingFeed'
 import AIEditor from './components/AIEditor'
 import SettingsPage from './components/Settings'
 import Projects from './components/Projects'
+import IndustrySurveyModal, { DEFAULT_SURVEYED_PROFILE } from './components/IndustrySurveyModal'
 
 const tabs = [
   { id: 'trending', label: 'Trending Feed', icon: Flame, description: 'Live trending reels from YouTube Shorts, Instagram & TikTok' },
@@ -20,17 +21,20 @@ export default function App() {
   const [showEditor, setShowEditor] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const [brandInfo, setBrandInfo] = useState({
-    brandName: '',
-    industry: '',
-    businessType: '',
-    email: ''
+  const [surveyModalOpen, setSurveyModalOpen] = useState(false)
+  const [brandInfo, setBrandInfo] = useState(() => {
+    try {
+      const saved = localStorage.getItem('viralReels_brand')
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return DEFAULT_SURVEYED_PROFILE
   })
 
   useEffect(() => {
     const saved = localStorage.getItem('viralReels_brand')
-    if (saved) {
-      try { setBrandInfo(JSON.parse(saved)) } catch {}
+    if (!saved) {
+      // Automatically save the surveyed default profile so user is ready to roll immediately
+      localStorage.setItem('viralReels_brand', JSON.stringify(DEFAULT_SURVEYED_PROFILE))
     }
   }, [])
 
@@ -66,7 +70,7 @@ export default function App() {
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-white">ViralReels</h1>
+            <h1 className="text-lg font-bold text-white">TrendWise</h1>
             <p className="text-[10px] text-brand-300 uppercase tracking-wider">AI Reels for SMEs</p>
           </div>
           <button className="md:hidden ml-auto text-slate-400" onClick={() => setSidebarOpen(false)}>
@@ -96,11 +100,22 @@ export default function App() {
         </nav>
 
         <div className="p-4 m-3 rounded-xl bg-white/5 border border-brand-500/10">
-          <p className="text-[10px] uppercase tracking-wider text-brand-300 mb-2">Your Brand</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] uppercase tracking-wider text-brand-300">Your Brand</p>
+            <button
+              onClick={() => setSurveyModalOpen(true)}
+              className="text-[10px] text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium"
+            >
+              <span>Survey</span>
+            </button>
+          </div>
           {brandInfo.brandName ? (
             <div>
-              <p className="text-sm font-semibold text-white">{brandInfo.brandName}</p>
-              <p className="text-xs text-slate-400">{brandInfo.industry || 'No industry set'}</p>
+              <p className="text-sm font-semibold text-white truncate">{brandInfo.brandName}</p>
+              <p className="text-xs text-slate-400 truncate">{brandInfo.industry || 'No industry set'}</p>
+              {brandInfo.businessType && (
+                <p className="text-[10px] text-slate-500 truncate mt-0.5">{brandInfo.businessType}</p>
+              )}
             </div>
           ) : (
             <p className="text-xs text-slate-500">Set your brand from the profile or editor</p>
@@ -128,6 +143,17 @@ export default function App() {
             <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
             <span className="text-xs text-green-400 font-medium">Live</span>
           </div>
+
+          {/* Quick Industry Survey Trigger */}
+          <button
+            onClick={() => setSurveyModalOpen(true)}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-brand-500/20 to-purple-500/20 hover:from-brand-500/30 hover:to-purple-500/30 border border-brand-500/30 text-xs font-semibold text-brand-200 hover:text-white transition shadow-sm"
+            title="Take or update industry survey"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-brand-400" />
+            <span>Industry Survey</span>
+          </button>
+
           <div className="relative">
             <button
               onClick={() => setProfileOpen(!profileOpen)}
@@ -137,16 +163,25 @@ export default function App() {
               <User className="w-5 h-5" />
             </button>
             {profileOpen && (
-              <div className="absolute right-0 top-12 w-72 glass rounded-2xl border border-brand-500/10 p-4 z-50 shadow-2xl">
+              <div className="absolute right-0 top-12 w-80 glass rounded-2xl border border-brand-500/10 p-4 z-50 shadow-2xl">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center flex-shrink-0">
                     <User className="w-6 h-6 text-white" />
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-white">{brandInfo.brandName || 'SME Creator'}</p>
-                    <p className="text-xs text-slate-400">{brandInfo.industry || 'Industry not set'}</p>
+                  <div className="overflow-hidden">
+                    <p className="text-sm font-semibold text-white truncate">{brandInfo.brandName || 'SME Creator'}</p>
+                    <p className="text-xs text-slate-400 truncate">{brandInfo.industry || 'Industry not set'}</p>
                   </div>
                 </div>
+
+                <button
+                  onClick={() => { setProfileOpen(false); setSurveyModalOpen(true) }}
+                  className="w-full mb-3 py-2 px-3 rounded-xl bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 text-xs text-brand-300 font-medium flex items-center justify-center gap-1.5 transition"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-brand-400" />
+                  <span>Retake Industry Survey</span>
+                </button>
+
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase tracking-wider text-slate-500">Brand name</label>
                   <input
@@ -162,6 +197,13 @@ export default function App() {
                     placeholder="Food & Beverage, Automotive..."
                     className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-white placeholder-slate-500"
                   />
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500">Business Niche</label>
+                  <input
+                    value={brandInfo.businessType || ''}
+                    onChange={e => saveBrandInfo({ ...brandInfo, businessType: e.target.value })}
+                    placeholder="Specialty Cafe, Boutique..."
+                    className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-white placeholder-slate-500"
+                  />
                   <label className="text-[10px] uppercase tracking-wider text-slate-500">Email</label>
                   <input
                     value={brandInfo.email || ''}
@@ -172,7 +214,7 @@ export default function App() {
                 </div>
                 <div className="mt-4 pt-3 border-t border-white/10 grid grid-cols-2 gap-2 text-xs text-slate-400">
                   <span className="flex items-center gap-1"><Building2 className="w-3 h-3" /> SME account</span>
-                  <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {brandInfo.email ? 'Email set' : 'No email'}</span>
+                  <span className="flex items-center gap-1 truncate"><Mail className="w-3 h-3 flex-shrink-0" /> {brandInfo.email ? 'Email set' : 'No email'}</span>
                 </div>
                 <button onClick={() => setProfileOpen(false)} className="w-full mt-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-slate-300 flex items-center justify-center gap-1">
                   <LogOut className="w-3 h-3" /> Close Profile
@@ -198,6 +240,13 @@ export default function App() {
           onClose={closeEditor}
         />
       )}
+
+      <IndustrySurveyModal
+        isOpen={surveyModalOpen}
+        onClose={() => setSurveyModalOpen(false)}
+        onSave={saveBrandInfo}
+        currentProfile={brandInfo}
+      />
     </div>
   )
 }

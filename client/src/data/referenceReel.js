@@ -48,7 +48,7 @@ export function isReferenceReel(item) {
 }
 
 export function pinReferenceReel(videos = []) {
-  return [referenceReel, ...videos.filter(video => !isReferenceReel(video))]
+  return [referenceReel, ...(videos || []).filter(video => !isReferenceReel(video))]
 }
 
 export function partGuidance(part) {

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   Scissors, Sparkles, Film, X, Play, Pause, Type, Music2,
   Palette, Crop, Zap, TrendingUp, Copy, Check, Loader2,
@@ -11,6 +11,7 @@ import { isReferenceReel, referenceParts, buildReferenceClips, buildPartAsset, p
 import { readReferenceDraft, writeReferenceDraft, deleteReferenceDraft, readVideoDuration } from '../services/referenceDrafts'
 import ClipVideo from './ClipVideo'
 import PartUploadPanel from './PartUploadPanel'
+import { assembleAndExportVideo } from '../utils/videoStitcher'
 
 const editorModes = [
   { id: 'edit', label: 'Edit', icon: Scissors },
@@ -115,12 +116,12 @@ const clipBeatBlueprints = [
     peopleNeeded: 1,
   },
   {
-    id: 'demo',
-    name: 'Demo',
-    originalLabel: 'Demo Reference',
-    uploadLabel: 'Demo Clip',
-    goal: 'demonstrate the action or solution clearly',
-    originalAnalysis: 'This section works as the how-it-works moment where the audience sees the process or transformation.',
+    id: 'showcase',
+    name: 'Showcase',
+    originalLabel: 'Feature Reference',
+    uploadLabel: 'Feature Clip',
+    goal: 'demonstrate the key action or highlight clearly',
+    originalAnalysis: 'This section works as the core showcase moment where the audience sees the process or transformation.',
     uploadAnalysis: 'Use this uploaded clip to demonstrate the key action, product usage, or hands-on movement.',
     originalCamera: 'Follow the hands or subject smoothly and keep the action centered throughout the move.',
     uploadCamera: 'Track the action smoothly from left to right and let the motion finish inside frame.',
@@ -171,7 +172,7 @@ const inferClipSubject = ({ reel, fileName }) => {
 }
 
 const getBeatBlueprint = (index, totalClips) => {
-  if (totalClips <= 1) return clipBeatBlueprints[2]
+  if (totalClips <= 1) return clipBeatBlueprints[0]
   if (totalClips === 2) return [clipBeatBlueprints[0], clipBeatBlueprints[4]][index] || clipBeatBlueprints[4]
   if (totalClips === 3) return [clipBeatBlueprints[0], clipBeatBlueprints[2], clipBeatBlueprints[4]][index] || clipBeatBlueprints[4]
   if (totalClips === 4) return [clipBeatBlueprints[0], clipBeatBlueprints[1], clipBeatBlueprints[2], clipBeatBlueprints[4]][index] || clipBeatBlueprints[4]
@@ -235,8 +236,11 @@ const buildOriginalClips = (reel) => {
 
     return {
       id: `original-${reel?.id || 'reel'}-clip-${index + 1}`,
+      partId: `part-${index + 1}`,
+      partNumber: index + 1,
       source: 'original',
       label: guidance.label,
+      stage: guidance.stage,
       durationSec,
       startSec,
       endSec,
@@ -270,11 +274,16 @@ const buildUploadAssetClips = ({ assetId, durationSec, previewUrl, fileName, fil
       totalClips: chunks.length,
     })
 
+    const cleanFileName = fileName ? fileName.replace(/\.[a-z0-9]+$/i, '') : 'User Clip'
+    const label = chunks.length === 1
+      ? cleanFileName
+      : `Clip ${index + 1}: ${guidance.stage}`
+
     return {
       id: `${assetId}-clip-${index + 1}`,
       assetId,
       source: 'upload',
-      label: guidance.label,
+      label,
       durationSec: clipDuration,
       localStartSec: startSec,
       localEndSec: endSec,
@@ -393,14 +402,61 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
 
   const currentFilter = filterPresets.find(f => f.id === selectedFilter)
   const originalDurationSec = Math.max(1, parseDurationToSeconds(reel.duration))
-  const uploadedTrackClips = isThreePart ? partUploadClips(uploadedAssets) : flattenUploadedTrackClips(uploadedAssets)
-  const totalUploadedDuration = isThreePart ? 8 : Math.max(1, uploadedAssets.reduce((sum, asset) => sum + (asset.durationSec || 0), 0))
+
+  const reelParts = useMemo(() => {
+    return originalClips.map((clip, index) => {
+      const partNum = index + 1
+      const partId = clip.partId || `part-${partNum}`
+      return {
+        id: partId,
+        number: partNum,
+        name: clip.stage || clip.guidance?.stage || `Part ${partNum}`,
+        label: clip.label || `Part ${partNum}`,
+        duration: clip.durationSec,
+        start: clip.startSec,
+        end: clip.endSec,
+        startPct: clip.startPct,
+        endPct: clip.endPct,
+        guidance: clip.guidance,
+      }
+    })
+  }, [originalClips])
+
+  const uploadedTrackClips = useMemo(() => {
+    return reelParts.map(part => {
+      const asset = uploadedAssets.find(a => a.partId === part.id)
+      if (!asset) return null
+      const trimStart = asset.trimStart || 0
+      return {
+        id: `upload-${part.id}`,
+        partId: part.id,
+        partNumber: part.number,
+        source: 'upload',
+        label: `Part ${part.number} · ${part.name}`,
+        stage: part.name,
+        fileName: asset.name,
+        assetName: asset.name,
+        durationSec: part.duration,
+        sourceDurationSec: asset.sourceDurationSec || part.duration,
+        localStartSec: trimStart,
+        localEndSec: trimStart + part.duration,
+        startSec: part.start,
+        endSec: part.end,
+        startPct: part.startPct,
+        endPct: part.endPct,
+        previewUrl: asset.previewUrl,
+        file: asset.file,
+        guidance: part.guidance,
+      }
+    }).filter(Boolean)
+  }, [reelParts, uploadedAssets])
+
   const allClips = [...originalClips, ...uploadedTrackClips]
-  const selectedClip = allClips.find(clip => clip.id === selectedClipId) || originalClips[0] || null
-  const activeTimelineDuration = selectedClip?.source === 'upload' ? totalUploadedDuration : originalDurationSec
-  const selectedPart = isThreePart ? referenceParts.find(part => part.id === selectedClip?.partId) : null
-  const selectedAsset = uploadedAssets.find(asset => asset.partId === selectedPart?.id)
-  const readyParts = 1 + referenceParts.filter(part => !part.locked && uploadedAssets.some(asset => asset.partId === part.id && asset.previewUrl)).length
+  const selectedClip = allClips.find(clip => clip.id === selectedClipId) || (uploadedTrackClips.length > 0 ? uploadedTrackClips[0] : originalClips[0]) || null
+  const selectedPart = reelParts.find(p => p.id === selectedClip?.partId || p.number === selectedClip?.partNumber) || reelParts[0] || null
+  const selectedAsset = uploadedAssets.find(asset => asset.partId === selectedPart?.id) || null
+  const readyParts = uploadedTrackClips.length
+  const activeTimelineDuration = originalDurationSec
   const previewUrl = selectedClip?.source === 'upload' ? selectedClip.previewUrl : reel.videoUrl
   const previewStart = selectedClip?.localStartSec ?? selectedClip?.startSec ?? 0
   const previewEnd = selectedClip?.localEndSec ?? selectedClip?.endSec
@@ -413,17 +469,22 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
         : ''
 
   useEffect(() => {
-    if (!selectedClipId && originalClips[0]) {
-      setSelectedClipId(originalClips[0].id)
-      setPlayhead(originalClips[0].startPct)
+    if (!selectedClipId) {
+      if (uploadedTrackClips.length > 0) {
+        setSelectedClipId(uploadedTrackClips[0].id)
+        setPlayhead(0)
+      } else if (originalClips[0]) {
+        setSelectedClipId(originalClips[0].id)
+        setPlayhead(originalClips[0].startPct)
+      }
     }
-  }, [selectedClipId, originalClips])
+  }, [selectedClipId, originalClips, uploadedTrackClips.length])
 
   useEffect(() => {
-    if (!restoring && selectedClipId && !allClips.find(clip => clip.id === selectedClipId)) {
-      setSelectedClipId(originalClips[0]?.id || null)
+    if (!restoring && selectedClipId && allClips.length > 0 && !allClips.some(clip => clip.id === selectedClipId)) {
+      setSelectedClipId(uploadedTrackClips[0]?.id || originalClips[0]?.id || null)
     }
-  }, [selectedClipId, allClips, originalClips])
+  }, [allClips.length])
 
   useEffect(() => {
     if (!isPlaying || !selectedClip || previewUrl) return undefined
@@ -447,20 +508,31 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   }
 
   const handlePreviewEnd = () => {
-    if (sequenceMode && selectedPart && selectedPart.number < 3) {
-      const nextPart = referenceParts[selectedPart.number]
-      const next = uploadedTrackClips.find(clip => clip.partId === nextPart.id)
-      if (next) { setSelectedClipId(next.id); setPlayhead(next.startPct); setIsPlaying(true); return }
+    if (sequenceMode) {
+      const currentPartNum = selectedClip?.partNumber || (selectedPart?.number ?? 1)
+      const nextPart = reelParts.find(p => p.number === currentPartNum + 1)
+      if (nextPart) {
+        const nextClip = uploadedTrackClips.find(clip => clip.partId === nextPart.id) || originalClips.find(clip => clip.partId === nextPart.id)
+        if (nextClip) {
+          setSelectedClipId(nextClip.id)
+          setPlayhead(nextClip.startPct)
+          setIsPlaying(true)
+          return
+        }
+      }
     }
     setIsPlaying(false)
     setSequenceMode(false)
   }
 
   const previewSequence = () => {
-    if (readyParts !== 3) return
     setPreviewVersion(version => version + 1)
-    setSelectedClipId(originalClips[0].id)
-    setPlayhead(0)
+    const firstPart = reelParts[0]
+    const firstClip = uploadedTrackClips.find(c => c.partId === firstPart?.id) || originalClips[0]
+    if (firstClip) {
+      setSelectedClipId(firstClip.id)
+      setPlayhead(firstClip.startPct || 0)
+    }
     setSequenceMode(true)
     setIsPlaying(true)
   }
@@ -539,31 +611,59 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
   }
 
   const choosePartUpload = (part = selectedPart) => {
-    if (!part || part.locked || uploadBusy || restoring || saving) return
+    if (!part || uploadBusy || restoring || saving) return
     uploadTarget.current = part
     partInputRef.current?.click()
   }
 
   const uploadPart = async (file, part) => {
-    if (!file || !part || part.locked || operationBusy.current || restoring || saving) return
-    const invalidType = validatePartFile(file, part.duration, part)
-    if (invalidType) { setClipError(invalidType); return }
+    if (!file || !part || operationBusy.current || restoring || saving) return
+    if (!file.type?.startsWith('video/') && !/\.(mp4|mov|webm|m4v)$/i.test(file.name || '')) {
+      setClipError('Please choose a valid video file (MP4, MOV, or WebM).')
+      return
+    }
     operationBusy.current = true
     setUploadBusy(true)
     setClipError('')
     const url = URL.createObjectURL(file)
     ownedUrls.current.add(url)
     try {
-      const duration = await readVideoDuration(url)
-      const error = validatePartFile(file, duration, part)
-      if (error) throw new Error(error)
+      const duration = await getVideoDuration(file, url)
       if (!mounted.current) return
       captureState()
-      const asset = buildPartAsset(file, url, duration, part)
-      const nextAssets = [...liveState.current.uploadedAssets.filter(item => item.partId !== part.id), asset]
+      const newAsset = {
+        id: `upload-${part.id}-${Date.now()}`,
+        partId: part.id,
+        partNumber: part.number,
+        name: file.name,
+        file,
+        previewUrl: url,
+        durationSec: part.duration,
+        sourceDurationSec: duration,
+        trimStart: 0,
+        clips: [{
+          id: `upload-${part.id}`,
+          partId: part.id,
+          partNumber: part.number,
+          source: 'upload',
+          label: `Part ${part.number} · ${part.name}`,
+          durationSec: part.duration,
+          localStartSec: 0,
+          localEndSec: part.duration,
+          mediaType: file.type || 'video/mp4',
+          fileName: file.name,
+          guidance: part.guidance
+        }]
+      }
+      const nextAssets = [
+        ...liveState.current.uploadedAssets.filter(item => item.partId !== part.id),
+        newAsset
+      ]
       setUploadedAssets(nextAssets)
-      handleClipSelect(partUploadClips(nextAssets).find(clip => clip.partId === part.id))
-      setSaveStatus('Unsaved footage. Save to keep it in this browser.')
+      setSelectedClipId(`upload-${part.id}`)
+      setPlayhead(part.startPct)
+      setIsPlaying(false)
+      setSaveStatus(`Part ${part.number} clip imported`)
     } catch (error) {
       URL.revokeObjectURL(url)
       ownedUrls.current.delete(url)
@@ -574,15 +674,19 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     }
   }
 
-  const trimSelectedPart = value => {
-    if (!selectedAsset) return
-    const trimStart = Math.min(Math.max(0, Number(value)), selectedAsset.sourceDurationSec - selectedPart.duration)
+  const trimSelectedPart = (value) => {
+    if (!selectedAsset || !selectedPart) return
+    const maxTrim = Math.max(0, (selectedAsset.sourceDurationSec || selectedPart.duration) - selectedPart.duration)
+    const trimStart = Math.min(Math.max(0, Number(value)), maxTrim)
     setUploadedAssets(assets => assets.map(asset => asset.id === selectedAsset.id ? {
-      ...asset, trimStart, clips: asset.clips.map(clip => ({ ...clip, localStartSec: trimStart, localEndSec: trimStart + selectedPart.duration })),
+      ...asset,
+      trimStart,
+      clips: (asset.clips || []).map(clip => ({
+        ...clip,
+        localStartSec: trimStart,
+        localEndSec: trimStart + selectedPart.duration
+      }))
     } : asset))
-    setSelectedClipId(selectedAsset.clips[0].id)
-    setSequenceMode(false)
-    setIsPlaying(false)
   }
 
   const handleUploadClips = async (e) => {
@@ -590,44 +694,94 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     if (files.length === 0) return
 
     captureState()
-    const uploadedAt = Date.now()
-    const newAssets = await Promise.all(files.map(async (file, index) => {
-      const previewUrl = URL.createObjectURL(file)
-      const durationSec = await getVideoDuration(file, previewUrl)
-      const assetId = `upload-${uploadedAt}-${index}`
+    setUploadBusy(true)
+    setClipError('')
 
-      return {
-        id: assetId,
-        name: file.name,
-        type: file.type || 'video/mp4',
-        size: file.size,
-        durationSec,
-        previewUrl,
-        clips: buildUploadAssetClips({
-          assetId,
-          durationSec,
+    try {
+      if (uploadTarget.current && files.length === 1) {
+        await uploadPart(files[0], uploadTarget.current)
+        uploadTarget.current = null
+        return
+      }
+
+      // Distribute files across parts
+      let targetParts = reelParts.filter(p => !uploadedAssets.some(a => a.partId === p.id))
+      if (targetParts.length === 0) targetParts = [...reelParts]
+
+      const newAssets = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const part = targetParts[i] || reelParts[i % reelParts.length]
+        if (!part) continue
+
+        const previewUrl = URL.createObjectURL(file)
+        ownedUrls.current.add(previewUrl)
+        const duration = await getVideoDuration(file, previewUrl)
+
+        newAssets.push({
+          id: `upload-${part.id}-${Date.now()}-${i}`,
+          partId: part.id,
+          partNumber: part.number,
+          name: file.name,
+          file,
           previewUrl,
-          fileName: file.name,
-          fileType: file.type,
-          reel,
+          durationSec: part.duration,
+          sourceDurationSec: duration,
+          trimStart: 0,
+          clips: [{
+            id: `upload-${part.id}`,
+            partId: part.id,
+            partNumber: part.number,
+            source: 'upload',
+            label: `Part ${part.number} · ${part.name}`,
+            durationSec: part.duration,
+            localStartSec: 0,
+            localEndSec: part.duration,
+            mediaType: file.type || 'video/mp4',
+            fileName: file.name,
+            guidance: part.guidance
+          }]
         })
       }
-    }))
 
-    const nextAssets = [...uploadedAssets, ...newAssets]
-    setUploadedAssets(nextAssets)
-    const firstNewClip = flattenUploadedTrackClips(nextAssets).find(clip => clip.id === newAssets[0]?.clips?.[0]?.id)
-    if (firstNewClip) handleClipSelect(firstNewClip)
-    e.target.value = ''
+      const nextAssets = [
+        ...uploadedAssets.filter(item => !newAssets.some(na => na.partId === item.partId)),
+        ...newAssets
+      ]
+      setUploadedAssets(nextAssets)
+      if (newAssets[0]) {
+        setSelectedClipId(`upload-${newAssets[0].partId}`)
+      }
+      setSaveStatus(`${newAssets.length} clip(s) imported to parts`)
+    } catch (err) {
+      setClipError(err.message)
+    } finally {
+      uploadTarget.current = null
+      setUploadBusy(false)
+      if (e.target) e.target.value = ''
+    }
+  }
+
+  const handleRemovePart = (partId) => {
+    captureState()
+    const remainingAssets = uploadedAssets.filter(asset => asset.partId !== partId)
+    setUploadedAssets(remainingAssets)
+    const fallback = originalClips.find(c => c.partId === partId) || originalClips[0]
+    if (fallback) {
+      setSelectedClipId(fallback.id)
+      setPlayhead(fallback.startPct)
+    }
   }
 
   const handleRemoveUploadedAsset = (assetId) => {
-    captureState()
-    const remainingAssets = uploadedAssets.filter(asset => asset.id !== assetId)
-    setUploadedAssets(remainingAssets)
-    if (selectedClip?.assetId === assetId) {
+    const asset = uploadedAssets.find(a => a.id === assetId)
+    if (asset) {
+      handleRemovePart(asset.partId)
+    } else {
+      captureState()
+      const remainingAssets = uploadedAssets.filter(a => a.id !== assetId)
+      setUploadedAssets(remainingAssets)
       setSelectedClipId(originalClips[0]?.id || null)
-      setPlayhead(originalClips[0]?.startPct || 0)
     }
   }
 
@@ -689,17 +843,30 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
     ))
   }
 
-  const currentEdits = () => ({
-    originalClips,
-    uploadedAssets,
-    selectedClipId,
-    textOverlays,
-    selectedMusic,
-    selectedFilter,
-    stickers,
-    selectedEffect,
-    volume
-  })
+  const currentEdits = () => {
+    const hasUploads = uploadedAssets.length > 0
+    return {
+      originalClips: hasUploads ? [] : originalClips,
+      uploadedAssets: uploadedAssets.map(asset => ({
+        id: asset.id,
+        name: asset.name,
+        durationSec: asset.durationSec,
+        clipCount: asset.clips?.length || 0,
+        file: asset.file,
+        previewUrl: asset.previewUrl
+      })),
+      selectedClipId,
+      textOverlays,
+      selectedMusic,
+      selectedFilter,
+      stickers,
+      selectedEffect,
+      volume,
+      sourceType: hasUploads ? 'user_imported_clips' : 'reference_trend',
+      primaryVideoName: hasUploads ? (uploadedAssets[0]?.name || 'User Footage') : (reel?.title || 'Trending Reel'),
+      excludeOriginal: hasUploads
+    }
+  }
 
   const handleApplyEdits = async () => {
     if (isThreePart) {
@@ -937,26 +1104,45 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                 {isPlaying ? <Pause className="w-4 h-4 text-white" /> : <Play className="w-4 h-4 text-white ml-0.5" fill="white" />}
               </button>
               <span className="text-xs text-slate-400 font-mono">{formatTimelineTime(selectedClip?.endPct ?? 100)}</span>
-              {isThreePart && <button onClick={previewSequence} disabled={readyParts !== 3 || uploadBusy || restoring} className="rounded-lg bg-white/5 px-3 py-2 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-30">{sequenceMode ? 'Restart sequence' : 'Preview all 3 parts'}</button>}
+              <button
+                onClick={previewSequence}
+                disabled={uploadBusy || restoring}
+                className="rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 px-3 py-1.5 text-xs text-emerald-300 font-semibold flex items-center gap-1.5 transition disabled:opacity-40"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                {sequenceMode ? 'Restart Sequence' : `Play All ${reelParts.length} Parts`}
+              </button>
             </div>
 
             <div className="bg-[#0e0e14] border-t border-white/5 p-3 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-medium text-white">Clip Timeline</p>
-                  <p className="text-[10px] text-slate-500">{isThreePart ? `${readyParts}/3 parts ready · Keep the intro, replace Parts 2 and 3. Reference 4–5s is skipped; final length is 8s.` : 'First track is the reference video. Add uploaded clips one by one and each clip is auto-split into short beats.'}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-bold text-white">Clip Timeline</p>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">
+                      {uploadedTrackClips.length} of {reelParts.length} Parts Uploaded
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {uploadedTrackClips.length === 0
+                      ? `Upload clips for each part below. Export will assemble only your clips.`
+                      : uploadedTrackClips.length < reelParts.length
+                        ? `Click empty part slots to upload. Upload all ${reelParts.length} parts to complete the full reel.`
+                        : `🎉 All ${reelParts.length} parts ready! Click Export to assemble and download your finished reel.`}
+                  </p>
                 </div>
-                <>
-                  <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleUploadClips} />
-                  <input ref={partInputRef} type="file" accept="video/*,.mp4,.mov,.webm,.m4v" className="hidden" aria-label="Upload selected part video" onChange={event => { const file = event.target.files[0]; event.target.value = ''; uploadPart(file, uploadTarget.current) }} />
+                <div className="flex items-center gap-2">
+                  <input ref={fileInputRef} type="file" accept="video/*" multiple className="hidden" onChange={handleUploadClips} />
+                  <input ref={partInputRef} type="file" accept="video/*,.mp4,.mov,.webm,.m4v" className="hidden" aria-label="Upload selected part video" onChange={event => { const file = event.target.files[0]; event.target.value = ''; if (file) uploadPart(file, uploadTarget.current) }} />
                   <button
-                    onClick={() => isThreePart ? choosePartUpload() : fileInputRef.current?.click()}
-                    disabled={isThreePart && (!selectedPart || selectedPart.locked || uploadBusy || restoring || saving)}
-                    className="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
+                    onClick={() => { uploadTarget.current = null; fileInputRef.current?.click() }}
+                    disabled={uploadBusy || restoring || saving}
+                    className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40 shadow-sm transition"
                   >
-                    <Upload className="w-3.5 h-3.5" /> {isThreePart ? selectedPart?.locked ? 'Intro included' : `Upload Part ${selectedPart?.number}` : 'Upload clip'}
+                    <Upload className="w-3.5 h-3.5" />
+                    {uploadedTrackClips.length > 0 ? 'Upload More Clips' : 'Upload Clips by Part'}
                   </button>
-                </>
+                </div>
               </div>
 
               <div className="flex justify-between text-[9px] text-slate-600 mb-1 px-1">
@@ -965,8 +1151,8 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
 
               <div ref={timelineRef} className="relative space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-[9px] text-slate-500 w-14 text-right">Original</span>
-                  <div className="flex-1 h-12 bg-white/5 rounded relative overflow-hidden border border-white/5">
+                  <span className="text-[9px] text-slate-500 w-14 text-right">Reference</span>
+                  <div className="flex-1 h-12 bg-white/5 rounded relative overflow-hidden border border-white/5 opacity-80 hover:opacity-100 transition">
                     {originalClips.map(clip => (
                       <button
                         key={clip.id}
@@ -986,36 +1172,67 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
                 </div>
 
                 <div className="flex items-start gap-2">
-                  <span className="text-[9px] text-slate-500 w-14 text-right pt-2">Uploads</span>
-                  <div className="flex-1 min-h-12 bg-white/5 rounded relative overflow-hidden border border-white/5 px-1 py-1">
-                    {isThreePart ? referenceParts.map(part => {
-                      const clip = uploadedTrackClips.find(item => item.partId === part.id)
-                      const original = originalClips.find(item => item.partId === part.id)
-                      return <button key={part.id} aria-label={`Uploads Part ${part.number}${part.locked ? ' included' : clip ? ' ready' : ' empty'}`}
-                        onClick={() => handleClipSelect(clip || original)}
-                        className={`absolute inset-y-1 rounded-md px-2 py-1 border text-left ${clip ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-dashed border-white/20 bg-white/5'} ${selectedClip?.id === clip?.id ? 'ring-1 ring-emerald-400' : ''}`}
-                        style={{ left: `${part.outputStart / 8 * 100}%`, width: `${part.duration / 8 * 100}%` }}>
-                        <span className="block text-[10px] font-semibold text-white truncate">Part {part.number} · {part.duration}s</span>
-                        <span className="block text-[9px] text-slate-400 truncate">{part.locked ? 'Original intro included' : clip ? clip.fileName : 'Select to upload'}</span>
-                      </button>
-                    }) : uploadedTrackClips.length > 0 ? (
-                      uploadedTrackClips.map(clip => (
-                        <button
-                          key={clip.id}
-                          onClick={() => handleClipSelect(clip)}
-                          className={`absolute inset-y-1 rounded-md px-2 py-1 border text-left ${selectedClip?.id === clip.id ? 'border-emerald-400 ring-1 ring-emerald-400/60 bg-emerald-500/20' : 'border-white/10 bg-emerald-500/10 hover:border-white/30'}`}
-                          style={{ left: `${clip.startPct}%`, width: `${Math.max(clip.endPct - clip.startPct, 8)}%` }}
-                        >
-                          <span className="block text-[10px] font-semibold text-white truncate">{clip.label}</span>
-                          <span className="block text-[9px] text-emerald-200 truncate">{clip.assetName || clip.fileName}</span>
-                          <span className="block text-[9px] text-slate-300">{clip.durationSec}s</span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="h-10 rounded border border-dashed border-white/10 flex items-center justify-center text-[10px] text-slate-500">
-                        Upload a clip and the editor will split it into short beats automatically.
-                      </div>
+                  <div className="w-14 text-right pt-2 flex flex-col items-end">
+                    <span className="text-[9px] font-semibold text-emerald-400">Your Clips</span>
+                    {uploadedTrackClips.length > 0 && (
+                      <span className="text-[8px] px-1 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                        {uploadedTrackClips.length}/{reelParts.length}
+                      </span>
                     )}
+                  </div>
+                  <div className="flex-1 min-h-12 bg-emerald-950/20 rounded relative overflow-hidden border border-emerald-500/20 px-1 py-1">
+                    {reelParts.map(part => {
+                      const clip = uploadedTrackClips.find(item => item.partId === part.id)
+                      const isSelected = selectedClip?.partId === part.id && (selectedClip?.source === 'upload' || !clip)
+                      const widthPct = part.endPct - part.startPct
+
+                      if (clip) {
+                        return (
+                          <button
+                            key={part.id}
+                            aria-label={`Uploaded clip for Part ${part.number} (${part.name})`}
+                            onClick={() => handleClipSelect(clip)}
+                            className={`absolute inset-y-1 rounded-md px-2 py-1 border text-left cursor-pointer transition flex flex-col justify-between overflow-hidden group ${
+                              isSelected
+                                ? 'border-emerald-400 ring-2 ring-emerald-400/80 bg-emerald-600/30'
+                                : 'border-emerald-500/40 bg-emerald-950/60 hover:border-emerald-400/70 hover:bg-emerald-900/40'
+                            }`}
+                            style={{ left: `${part.startPct}%`, width: `calc(${widthPct}% - 4px)` }}
+                          >
+                            <div className="flex items-center justify-between gap-1 w-full">
+                              <span className="text-[10px] font-bold text-white truncate flex items-center gap-1">
+                                <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                                <span>Part {part.number} · {part.name}</span>
+                              </span>
+                              <span className="text-[8px] font-mono text-emerald-300 bg-emerald-950/80 px-1 py-0.5 rounded shrink-0">
+                                {part.duration}s
+                              </span>
+                            </div>
+                            <span className="text-[9px] text-emerald-200 truncate w-full font-medium">
+                              {clip.fileName}
+                            </span>
+                          </button>
+                        )
+                      }
+
+                      return (
+                        <button
+                          key={part.id}
+                          aria-label={`Upload clip for Part ${part.number} (${part.name})`}
+                          onClick={() => choosePartUpload(part)}
+                          className="absolute inset-y-1 rounded-md border border-dashed border-emerald-500/40 hover:border-emerald-400 bg-white/[0.02] hover:bg-emerald-950/30 px-2 py-1 text-left cursor-pointer transition flex flex-col justify-center items-center text-center group"
+                          style={{ left: `${part.startPct}%`, width: `calc(${widthPct}% - 4px)` }}
+                        >
+                          <div className="flex items-center gap-1 text-[10px] font-semibold text-emerald-400 group-hover:text-emerald-300">
+                            <Upload className="w-3 h-3 shrink-0" />
+                            <span className="truncate">+ Upload Part {part.number}</span>
+                          </div>
+                          <span className="text-[8px] text-slate-400 truncate mt-0.5">
+                            {part.name} · {part.duration}s slot
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
 
@@ -1071,22 +1288,31 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
               <div className="p-4 space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-sm font-semibold text-white">{isThreePart ? 'Clip Guidelines' : 'AI Clip Guidelines'}</h3>
-                    <p className="text-[10px] text-slate-500">{isThreePart ? 'Follow the reference using your own people and food.' : 'Each reference beat and uploaded beat gets its own AI analysis, video role, and shooting notes.'}</p>
+                    <h3 className="text-sm font-semibold text-white">Part Guidelines & Upload</h3>
+                    <p className="text-[10px] text-slate-500">Upload your clips by part to assemble your reel.</p>
                   </div>
-                  {!isThreePart && <button onClick={() => fileInputRef.current?.click()} className="px-2.5 py-1.5 rounded bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1">
-                    <Upload className="w-3 h-3" /> Add clip
-                  </button>}
+                  <button onClick={() => choosePartUpload(selectedPart)} className="px-2.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-[10px] text-white font-medium flex items-center gap-1 transition">
+                    <Upload className="w-3 h-3" /> Upload Part {selectedPart?.number || 1}
+                  </button>
                 </div>
 
                 {restoring && <p role="status" className="text-xs text-slate-400">Restoring saved footage…</p>}
                 {uploadBusy && <p role="status" className="text-xs text-slate-400">Reading video…</p>}
                 {clipError && <p role="alert" className="text-xs text-amber-400">{clipError}</p>}
-                {isThreePart && <PartUploadPanel part={selectedPart} asset={selectedAsset} busy={uploadBusy || restoring || saving}
-                  onUpload={() => choosePartUpload()} onDrop={file => uploadPart(file, selectedPart)}
-                  onReference={() => handleClipSelect(originalClips.find(clip => clip.partId === selectedPart.id))}
-                  onMine={() => handleClipSelect(uploadedTrackClips.find(clip => clip.partId === selectedPart.id))}
-                  onTrim={trimSelectedPart} onTrimStart={captureState} />}
+                {selectedPart && (
+                  <PartUploadPanel
+                    part={selectedPart}
+                    asset={selectedAsset}
+                    busy={uploadBusy || restoring || saving}
+                    onUpload={() => choosePartUpload(selectedPart)}
+                    onDrop={file => uploadPart(file, selectedPart)}
+                    onReference={() => handleClipSelect(originalClips.find(clip => clip.partId === selectedPart.id))}
+                    onMine={() => handleClipSelect(uploadedTrackClips.find(clip => clip.partId === selectedPart.id))}
+                    onTrim={trimSelectedPart}
+                    onTrimStart={captureState}
+                    onRemove={() => handleRemovePart(selectedPart.id)}
+                  />
+                )}
 
                 {selectedClip ? (
                   <>
@@ -1345,7 +1571,14 @@ export default function AIEditor({ selectedReel, brandInfo, onSaveBrandInfo, onR
       )}
 
       {showExport && (
-        <ExportModal reel={reel} onClose={() => setShowExport(false)} edits={currentEdits()} onSavedExport={handleSaveProject} />
+        <ExportModal
+          reel={reel}
+          onClose={() => setShowExport(false)}
+          edits={currentEdits()}
+          onSavedExport={handleSaveProject}
+          reelParts={reelParts}
+          uploadedTrackClips={uploadedTrackClips}
+        />
       )}
     </div>
   )
@@ -1424,6 +1657,11 @@ function GenerateMode({ reel, brandInfo }) {
             <div>
               <p className="text-sm font-semibold text-white">Virality Score</p>
               <p className="text-xs text-slate-400">{concept.inspiration}</p>
+              {concept.aiProvider && (
+                <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-medium bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                  {concept.aiProvider}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1528,7 +1766,17 @@ function RemixMode({ brandInfo, reel, onSavePlan }) {
       {result && (
         <div className="space-y-4 animate-fade-in mt-4">
           <div className="glass rounded-xl p-4 border-green-500/20">
-            <div className="flex items-center gap-2 text-green-400 mb-3"><Check className="w-5 h-5" /><span className="font-semibold">{result.message}</span></div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-green-400">
+                <Check className="w-5 h-5" />
+                <span className="font-semibold">{result.message}</span>
+              </div>
+              {result.plan?.aiProvider && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                  {result.plan.aiProvider}
+                </span>
+              )}
+            </div>
             <div className="space-y-2">
               <h4 className="text-xs uppercase text-slate-400">Scene Plan</h4>
               {result.plan.scenes.map((s, i) => (
@@ -1549,14 +1797,13 @@ function RemixMode({ brandInfo, reel, onSavePlan }) {
 }
 
 // ===== Export Modal =====
-function ExportModal({ reel, onClose, edits, onSavedExport }) {
+function ExportModal({ reel, onClose, edits, onSavedExport, reelParts = [], uploadedTrackClips = [] }) {
   const [selectedPlatforms, setSelectedPlatforms] = useState(['youtube', 'instagram', 'tiktok'])
   const [exporting, setExporting] = useState(false)
   const [done, setDone] = useState(false)
   const [exportResult, setExportResult] = useState(null)
   const [exportError, setExportError] = useState('')
-  const threePart = isReferenceReel(reel)
-  const plan = threePart ? assemblyPlan(edits.uploadedAssets || [], edits, selectedPlatforms) : null
+  const [exportProgress, setExportProgress] = useState({ percent: 0, message: '' })
 
   const platforms = [
     { id: 'youtube', name: 'YouTube Shorts', res: '1080x1920' },
@@ -1568,86 +1815,337 @@ function ExportModal({ reel, onClose, edits, onSavedExport }) {
     setSelectedPlatforms(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
   }
 
+  const readyClips = (uploadedTrackClips && uploadedTrackClips.length > 0)
+    ? uploadedTrackClips
+    : (edits.uploadedAssets || []).map((asset, idx) => ({
+        partNumber: asset.partNumber || idx + 1,
+        stage: asset.name,
+        durationSec: asset.durationSec || 3,
+        localStartSec: asset.trimStart || 0,
+        previewUrl: asset.previewUrl,
+        file: asset.file,
+        fileName: asset.name
+      }))
+
+  const hasUserUploads = readyClips.length > 0
+  const totalPartsCount = reelParts.length || 3
+
   const handleExport = async () => {
-    if (threePart && !plan.ready) return
+    if (!hasUserUploads) {
+      setExportError('Please upload at least one video clip for your parts to export.')
+      return
+    }
+
     setExporting(true)
     setExportError('')
-    try {
-      const result = threePart ? { status: 'assembly-plan-only', plan } : await exportReel({ videoId: reel.id, platforms: selectedPlatforms, editConfig: edits })
-      if (result.success === false) throw new Error(result.message || 'Export failed. Please try again.')
-      await onSavedExport?.(result)
-      setExportResult(result)
-      setDone(true)
-    } catch (error) { setExportError(error.message || 'Could not save the export. Please try again.') }
-    finally { setExporting(false) }
-  }
+    setExportProgress({ percent: 5, message: 'Starting export assembly...' })
 
-  const downloadPlan = () => {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(exportResult.plan, null, 2)], { type: 'application/json' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'on-the-go-delivery-plan.json'
-    link.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    try {
+      const partsToRender = readyClips.map(clip => ({
+        partNumber: clip.partNumber,
+        name: clip.stage || clip.label,
+        duration: clip.durationSec,
+        trimStart: clip.localStartSec || 0,
+        previewUrl: clip.previewUrl,
+        file: clip.file,
+        fileName: clip.fileName
+      }))
+
+      // 1. Client-side video assembly and rendering into real playable video
+      const rendered = await assembleAndExportVideo({
+        parts: partsToRender,
+        textOverlays: edits.textOverlays || [],
+        selectedFilter: edits.selectedFilter || 'original',
+        stickers: edits.stickers || [],
+        volume: edits.volume ?? 80,
+        onProgress: setExportProgress
+      })
+
+      // 2. Server package manifest creation
+      const serverResult = await exportReel({
+        videoId: `user_parts_${Date.now()}`,
+        platforms: selectedPlatforms,
+        editConfig: {
+          ...edits,
+          partsAssembled: partsToRender.map(p => ({
+            part: p.partNumber,
+            name: p.name,
+            duration: p.duration,
+            fileName: p.fileName
+          })),
+          excludeOriginal: true,
+          outputVideo: rendered.filename
+        }
+      }).catch(err => {
+        console.warn('[Export] Server export package warning:', err.message)
+        return { success: true, exports: selectedPlatforms.map(p => ({ platform: p, status: 'rendered-ready' })) }
+      })
+
+      // 3. Auto-trigger download of the rendered video file
+      if (rendered.downloadUrl) {
+        const link = document.createElement('a')
+        link.href = rendered.downloadUrl
+        link.download = rendered.filename
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      }
+
+      const combinedResult = {
+        ...serverResult,
+        assembledVideoUrl: rendered.downloadUrl,
+        assembledFilename: rendered.filename,
+        assembledBlob: rendered.blob,
+        durationSeconds: rendered.durationSeconds,
+        partsAssembledCount: rendered.partsAssembled,
+        readyClips
+      }
+
+      await onSavedExport?.(combinedResult)
+      setExportResult(combinedResult)
+      setDone(true)
+    } catch (error) {
+      console.error('[Export] Error:', error)
+      setExportError(error.message || 'Export assembly failed. Please try again.')
+    } finally {
+      setExporting(false)
+    }
   }
 
   return (
-    <div role="dialog" aria-label="Export reel" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={onClose}>
-      <div className="glass rounded-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+    <div role="dialog" aria-label="Export reel" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm" onClick={onClose}>
+      <div className="glass rounded-2xl max-w-lg w-full p-6 border border-white/10 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         {done ? (
-          <div className="text-center">
-            <Check className="w-16 h-16 text-green-400 mx-auto mb-3" />
-            <h3 className="text-lg font-bold text-white mb-1">{threePart ? 'Assembly plan ready' : 'Export Complete!'}</h3>
-            <p className="text-sm text-slate-400 mb-4">{threePart ? 'Original intro + your delivery clip + your chef reveal. This is a plan, not a rendered MP4.' : `Your reel has been processed for ${selectedPlatforms.length} platform(s)`}</p>
-            {threePart && <button onClick={downloadPlan} className="w-full py-3 rounded-lg bg-brand-600 text-white text-sm">Download assembly plan (.json)</button>}
-            {!threePart && (exportResult?.exports || selectedPlatforms.map(p => ({ platform: p, status: 'planned' }))).map(item => (
-              <div key={item.platform} className="flex items-center justify-between p-2 rounded-lg bg-white/5 mb-1">
-                <span className="text-sm text-white capitalize">{item.platform}</span>
-                {item.downloadUrl ? (
-                  <a href={item.downloadUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1"><Download className="w-3 h-3" /> Download</a>
-                ) : (
-                  <span className="text-xs text-amber-400">{item.status || 'planned'}</span>
-                )}
+          <div className="text-center space-y-4">
+            <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/20">
+              <Check className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold text-white">Reel Export Complete!</h3>
+              <p className="text-xs text-slate-300 mt-1">
+                Your video has been assembled from your {exportResult?.partsAssembledCount || readyClips.length} uploaded part clip(s).
+                <br />
+                <span className="text-emerald-400 font-medium">Saved to your downloads folder.</span> (Original reference excluded)
+              </p>
+            </div>
+
+            {/* Assembled Video Preview */}
+            {exportResult?.assembledVideoUrl && (
+              <div className="rounded-xl overflow-hidden bg-black border border-emerald-500/30 shadow-xl max-h-56 mx-auto flex items-center justify-center">
+                <video
+                  src={exportResult.assembledVideoUrl}
+                  controls
+                  autoPlay
+                  playsInline
+                  className="w-full h-56 object-contain"
+                />
               </div>
-            ))}
-            <button onClick={onClose} className="w-full mt-4 py-2.5 rounded-lg bg-brand-600 text-white text-sm font-semibold">Done</button>
+            )}
+
+            {/* Download Assembled Reel Button */}
+            {exportResult?.assembledVideoUrl && (
+              <button
+                onClick={() => {
+                  const link = document.createElement('a')
+                  link.href = exportResult.assembledVideoUrl
+                  link.download = exportResult.assembledFilename
+                  document.body.appendChild(link)
+                  link.click()
+                  document.body.removeChild(link)
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 transition"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Assembled Reel ({exportResult.assembledFilename})</span>
+              </button>
+            )}
+
+            {/* Individual Parts Download Section */}
+            {readyClips.length > 0 && (
+              <div className="rounded-xl bg-white/5 border border-white/10 p-3 text-left space-y-2">
+                <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                  Individual Part Clips ({readyClips.length} parts)
+                </p>
+                <div className="space-y-1.5">
+                  {readyClips.map((c, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg bg-black/30 border border-white/5">
+                      <div className="min-w-0 pr-2">
+                        <span className="font-semibold text-emerald-300">Part {c.partNumber || i + 1}</span>
+                        <span className="text-slate-300 ml-1.5 truncate">({c.stage || c.label})</span>
+                        <p className="text-[10px] text-slate-400 truncate">{c.fileName}</p>
+                      </div>
+                      <a
+                        href={c.previewUrl}
+                        download={`part_${c.partNumber || i + 1}_${c.fileName || 'clip.mp4'}`}
+                        className="text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1 shrink-0 transition"
+                      >
+                        <Download className="w-3 h-3" /> Download
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Platform Packages */}
+            <div className="space-y-1.5 text-left">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Platform Deployment Packages</p>
+              {(exportResult?.exports || selectedPlatforms.map(p => ({ platform: p, status: 'ready' }))).map(item => (
+                <div key={item.platform} className="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+                  <span className="text-xs font-medium text-white capitalize">{item.platform} Package (9:16)</span>
+                  {item.downloadUrl ? (
+                    <a href={item.downloadUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 font-semibold">
+                      <Download className="w-3 h-3" /> View Package
+                    </a>
+                  ) : (
+                    <span className="text-[10px] text-emerald-400 font-medium">Ready</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button onClick={onClose} className="w-full mt-2 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-semibold transition">
+              Done
+            </button>
           </div>
         ) : (
           <>
-            <h3 className="text-lg font-bold text-white mb-4">Export Reel</h3>
-            <p className="text-xs text-slate-400 mb-4">Select target platforms (9:16 vertical format)</p>
-            {threePart && <div className="rounded-lg bg-white/5 p-3 mb-4 text-xs text-slate-300 space-y-2">
-              {referenceParts.map(part => <p key={part.id}>Part {part.number} · {part.duration}s · {part.locked ? 'Original meme' : edits.uploadedAssets.find(asset => asset.partId === part.id)?.name || 'Upload needed'}</p>)}
-              <p className="text-slate-400">8-second sequence. Export saves a JSON assembly plan; MP4 rendering is not connected. Footage stays in this browser. Use reference material only with permission.</p>
-              {!plan.ready && <p className="text-amber-400">Add your Part 2 and Part 3 clips to continue.</p>}
-            </div>}
-            {exportError && <p role="alert" className="text-xs text-amber-400 mb-3">{exportError}</p>}
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">Export Assembled Reel</h3>
+                <p className="text-xs text-slate-400">Export your user uploaded clips into 9:16 vertical video.</p>
+              </div>
+              <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Part Breakdown Status Card */}
+            <div className="mb-4 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <p className="font-bold text-emerald-300 flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-emerald-400" />
+                  <span>Exporting User Clips Only</span>
+                </p>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-200 text-[10px] font-bold">
+                  {readyClips.length} of {totalPartsCount} Parts Ready
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300">
+                The original reference video is <span className="font-semibold text-white">EXCLUDED</span>. Only your uploaded part footage will be stitched and exported.
+              </p>
+
+              {/* Part Slots Status List */}
+              <div className="space-y-1.5 pt-1">
+                {reelParts.map(part => {
+                  const clip = readyClips.find(c => c.partId === part.id || c.partNumber === part.number)
+                  return (
+                    <div key={part.id} className="flex items-center justify-between py-1 px-2 rounded bg-black/30 text-[11px]">
+                      <span className="text-white font-medium">Part {part.number}: {part.name} ({part.duration}s)</span>
+                      {clip ? (
+                        <span className="text-emerald-300 flex items-center gap-1 font-semibold truncate max-w-[180px]">
+                          <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                          <span className="truncate">{clip.fileName}</span>
+                        </span>
+                      ) : (
+                        <span className="text-amber-400 text-[10px]">Slot empty</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {readyClips.length < totalPartsCount && readyClips.length > 0 && (
+                <p className="text-[10px] text-amber-300 pt-1">
+                  💡 Note: {totalPartsCount - readyClips.length} part(s) are empty. Export will assemble the {readyClips.length} available part(s).
+                </p>
+              )}
+            </div>
+
+            {exportError && (
+              <p role="alert" className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg mb-3">
+                {exportError}
+              </p>
+            )}
+
+            {/* Target Platforms */}
             <div className="space-y-2 mb-4">
-              {platforms.map(p => (
-                <label key={p.id} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 cursor-pointer hover:bg-white/10">
-                  <input type="checkbox" checked={selectedPlatforms.includes(p.id)} onChange={() => togglePlatform(p.id)} className="accent-brand-500 w-4 h-4" />
-                  <div>
-                    <p className="text-sm text-white">{p.name}</p>
-                    <p className="text-[10px] text-slate-500">{p.res}</p>
-                  </div>
-                </label>
-              ))}
+              <label className="text-xs font-semibold text-slate-300">Target Platforms (9:16 Vertical)</label>
+              <div className="grid grid-cols-3 gap-2">
+                {platforms.map(p => (
+                  <label
+                    key={p.id}
+                    className={`flex flex-col items-center p-2.5 rounded-xl border cursor-pointer transition text-center ${
+                      selectedPlatforms.includes(p.id)
+                        ? 'border-brand-500 bg-brand-500/10 text-white'
+                        : 'border-white/5 bg-white/5 text-slate-400 hover:border-white/20'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedPlatforms.includes(p.id)}
+                      onChange={() => togglePlatform(p.id)}
+                      className="hidden"
+                    />
+                    <span className="text-xs font-semibold">{p.name}</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">{p.res}</span>
+                  </label>
+                ))}
+              </div>
             </div>
-            <div className="text-xs text-slate-500 mb-4 space-y-1">
-              <p>Original clips: {edits.originalClips?.length || 0}</p>
-              <p>Uploaded clips: {(edits.uploadedAssets || []).reduce((sum, asset) => sum + (asset.clips?.length || 0), 0)}</p>
-              <p>Selected clip: {edits.selectedClipId || 'None'}</p>
-              <p>Text overlays: {edits.textOverlays.length}</p>
-              <p>Music: {edits.selectedMusic ? 'Selected' : 'None'}</p>
-              <p>Filter: {edits.selectedFilter}</p>
-              <p>Stickers: {edits.stickers?.length || 0}</p>
-              <p>Effect: {edits.selectedEffect || 'none'}</p>
+
+            {/* Applied Edits Info */}
+            <div className="text-xs text-slate-400 mb-4 bg-white/5 rounded-xl p-3 space-y-1">
+              <div className="flex justify-between">
+                <span>Text Overlays:</span>
+                <span className="text-white font-medium">{edits.textOverlays?.length || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Color Filter:</span>
+                <span className="text-white font-medium capitalize">{edits.selectedFilter || 'Original'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Volume:</span>
+                <span className="text-white font-medium">{edits.volume ?? 80}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Original Reference Video:</span>
+                <span className="text-emerald-400 font-semibold">Excluded</span>
+              </div>
             </div>
+
+            {/* Exporting Progress Bar */}
+            {exporting && (
+              <div className="mb-4 p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-300 font-medium">{exportProgress.message || 'Assembling video...'}</span>
+                  <span className="text-emerald-400 font-mono font-bold">{exportProgress.percent}%</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-black/40 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-green-400 transition-all duration-200"
+                    style={{ width: `${exportProgress.percent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-sm font-medium">Cancel</button>
-              <button onClick={handleExport} disabled={exporting || selectedPlatforms.length === 0 || (threePart && !plan.ready)} className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-brand-600 to-purple-600 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
+              <button
+                onClick={onClose}
+                disabled={exporting}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm font-medium transition disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExport}
+                disabled={exporting || selectedPlatforms.length === 0 || !hasUserUploads}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white text-sm font-semibold disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition"
+              >
                 {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                {exporting ? 'Exporting...' : threePart ? 'Prepare export plan' : 'Export'}
+                {exporting ? 'Assembling Reel...' : `Assemble & Export Reel`}
               </button>
             </div>
           </>

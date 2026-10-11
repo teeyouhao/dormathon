@@ -39,7 +39,7 @@ app.get('/api/health', (req, res) => {
       youtube: !!process.env.YOUTUBE_API_KEY,
       instagram: getInstagramConfig().enabled && getInstagramConfig().tokenConfigured,
       tiktok: process.env.TIKTOK_SCRAPING_ENABLED === 'true',
-      ai: !!process.env.OPENAI_API_KEY || !!process.env.ANTHROPIC_API_KEY,
+      ai: !!process.env.OPENAI_API_KEY || !!process.env.ANTHROPIC_API_KEY || !!process.env.GEMINI_API_KEY,
       supabase: getSupabaseStatus().configured
     },
     storage: {
@@ -54,12 +54,12 @@ app.get('*', (req, res) => {
     res.status(404).json({ error: 'Not found' })
   } else {
     res.sendFile(path.join(clientBuildPath, 'index.html'), (err) => {
-      if (err) res.status(200).json({ message: 'ViralReels API Server', docs: '/api/health' })
+      if (err) res.status(200).json({ message: 'TrendWise API Server', docs: '/api/health' })
     })
   }
 })
 
 app.listen(PORT, () => {
-  console.log(`\n  ViralReels Server running on http://localhost:${PORT}`)
+  console.log(`\n  TrendWise Server running on http://localhost:${PORT}`)
   console.log(`  Health check: http://localhost:${PORT}/api/health\n`)
 })

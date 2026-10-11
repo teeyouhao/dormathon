@@ -82,6 +82,7 @@ router.post('/', (req, res) => {
   if (updated.ai?.apiKey) {
     if (updated.ai.provider === 'openai') process.env.OPENAI_API_KEY = updated.ai.apiKey
     if (updated.ai.provider === 'anthropic') process.env.ANTHROPIC_API_KEY = updated.ai.apiKey
+    if (updated.ai.provider === 'gemini') process.env.GEMINI_API_KEY = updated.ai.apiKey
   }
   if (updated.supabase?.url) {
     process.env.SUPABASE_URL = updated.supabase.url

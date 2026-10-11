@@ -8,7 +8,10 @@ import { promisify } from 'util'
 import path from 'path'
 import fs from 'fs'
 
+import { fileURLToPath } from 'url'
+
 const execFileAsync = promisify(execFile)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let ffmpegAvailable = null
 
 async function checkFFmpeg() {
@@ -24,7 +27,7 @@ async function checkFFmpeg() {
 }
 
 function ensureOutputDir() {
-  const outputDir = path.join(process.cwd(), 'outputs')
+  const outputDir = path.join(__dirname, '..', 'outputs')
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true })
   return outputDir
 }
@@ -32,11 +35,17 @@ function ensureOutputDir() {
 function writeExportPackage({ videoId, platform, editConfig, status = 'ready', outputVideo = null }) {
   const outputDir = ensureOutputDir()
   const timestamp = Date.now()
-  const baseName = `export_${platform}_${videoId || 'reel'}_${timestamp}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const isUserUpload = editConfig?.excludeOriginal || (editConfig?.uploadedAssets && editConfig.uploadedAssets.length > 0)
+  const userClipName = editConfig?.uploadedAssets?.[0]?.name || editConfig?.primaryVideoName || 'user_footage'
+  const exportTarget = isUserUpload ? `user_${userClipName}` : (videoId || 'reel')
+  const baseName = `export_${platform}_${exportTarget}_${timestamp}`.replace(/[^a-zA-Z0-9_-]/g, '_')
   const jsonName = `${baseName}.json`
   const htmlName = `${baseName}.html`
   const manifest = {
-    videoId,
+    videoId: isUserUpload ? `user-imported-${userClipName}` : videoId,
+    sourceType: isUserUpload ? 'user-imported-footage' : 'original-reference-reel',
+    originalVideoExcluded: Boolean(isUserUpload),
+    userImportedClips: isUserUpload ? (editConfig.uploadedAssets || []) : [],
     platform,
     status,
     format: 'mp4',
@@ -49,9 +58,9 @@ function writeExportPackage({ videoId, platform, editConfig, status = 'ready', o
 
   fs.writeFileSync(path.join(outputDir, jsonName), JSON.stringify(manifest, null, 2))
   fs.writeFileSync(path.join(outputDir, htmlName), `<!doctype html>
-<html><head><meta charset="utf-8"><title>ViralReels Export - ${platform}</title>
-<style>body{font-family:Inter,Arial,sans-serif;background:#0f0f17;color:#fff;padding:32px}pre{background:#181827;padding:16px;border-radius:12px;overflow:auto}.card{max-width:780px;margin:auto}.ok{color:#22c55e}</style></head>
-<body><div class="card"><h1>ViralReels Export Package</h1><p class="ok">Platform: ${platform} · 9:16 · 1080x1920</p><p>This package contains the exact edit configuration for rendering or posting workflow.</p><pre>${JSON.stringify(manifest, null, 2).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</pre></div></body></html>`)
+<html><head><meta charset="utf-8"><title>TrendWise Export - ${platform}</title>
+<style>body{font-family:Inter,Arial,sans-serif;background:#0f0f17;color:#fff;padding:32px}pre{background:#181827;padding:16px;border-radius:12px;overflow:auto}.card{max-width:780px;margin:auto}.ok{color:#22c55e}.source{color:#38bdf8;font-weight:600}</style></head>
+<body><div class="card"><h1>TrendWise Export Package</h1><p class="ok">Platform: ${platform} · 9:16 · 1080x1920</p><p class="source">${isUserUpload ? `Source: User Imported Footage (${userClipName}) — Original Reference Excluded` : `Source: Reference Reel (${videoId})`}</p><p>This package contains the exact edit configuration for rendering or posting workflow.</p><pre>${JSON.stringify(manifest, null, 2).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</pre></div></body></html>`)
 
   return {
     platform,
