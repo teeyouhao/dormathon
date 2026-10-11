@@ -179,3 +179,4 @@ viral-reels/
 - When no live source returns data, the trending feed serves the bundled demo dataset and visibly labels demo status.
 - FFmpeg is optional: with it, exports can render MP4; without it, export manifests are still produced.
 - Supabase credentials and the Apify token stay on the server; only public configuration reaches the browser.
+Sun Oct 11 21:45:56 +08 2026
