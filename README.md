@@ -29,22 +29,6 @@ Opens when you choose a reel — the **Back** button returns to the feed.
 - Settings: YouTube API key, Instagram/TikTok scraper toggles, AI provider, Supabase URL/table, and **live backend health** indicators.
 - Profile icon (top-right): brand name, industry and email, stored locally for use in AI concept generation.
 
-## Data sources — read this first
-
-The app is honest about where reels come from:
-
-| Source | When it is used | Real reels? |
-|---|---|---|
-| YouTube Data API v3 | `YOUTUBE_API_KEY` is set | ✅ Yes (official API) |
-| Instagram via Apify (`apify/instagram-scraper`) | Server `APIFY_TOKEN` is set and `INSTAGRAM_SCRAPING_ENABLED=true` | ✅ Live provider; tested with one result per hashtag |
-| TikTok Playwright scraper | `TIKTOK_SCRAPING_ENABLED=true` | ✅ Yes (if not blocked) |
-| Bundled demo dataset | No live source returned data | ❌ No — clearly labelled `source: mock` |
-
-If you see demo reels, **no live provider returned data**. The UI visibly indicates demo status, and the API reports its `source`. Configure a YouTube API key, Instagram's server-only Apify token plus enable flag, or TikTok's scraper to request live data; configuration does not guarantee results.
-
-Instagram uses the Apify Actor, not local Playwright. It submits `directUrls` for the `mostviewed`, `trending` and `viral` hashtags with `resultsType: "reels"` via POST `run-sync-get-dataset-items`; it never uses `search` or `searchType`. A live smoke test on 2026-10-10 with `resultsLimit: 1` returned HTTP 201 and three playable clips; ongoing availability depends on the Actor and Instagram. TikTok remains a best-effort Playwright headless-browser scraper.
-
-Instagram keeps only items with `productType: "clips"` and an HTTPS `videoUrl`. It preserves the requested metadata fields, including `likesCount: -1` with `likesHidden: true` (shown as hidden in the UI); unknown metrics remain `null`, not zero. The `apify-instagram` source is preserved in database records and raw payloads.
 
 ## Persistence (Supabase)
 
@@ -61,8 +45,6 @@ Helpful endpoints:
 - **Frontend**: React + Vite + Tailwind CSS (dark theme)
 - **Backend**: Node.js + Express
 - **Data providers**: Apify `apify/instagram-scraper` (Instagram), Playwright (TikTok), YouTube Data API v3
-- **Video processing**: FFmpeg (optional)
-- **AI**: OpenAI / Anthropic (optional, with local fallback)
 - **Database**: Supabase (with local JSON fallback)
 
 ## Quick Start
