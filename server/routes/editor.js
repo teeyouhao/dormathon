@@ -7,7 +7,7 @@ import { generateRemixPlan } from '../services/aiService.js'
 
 const router = Router()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const dataDir = path.join(__dirname, '..', 'data-store')
+const dataDir = process.env.VERCEL ? path.join('/tmp', 'data-store') : path.join(__dirname, '..', 'data-store')
 const projectsFile = path.join(dataDir, 'projects.json')
 
 function ensureStore() {

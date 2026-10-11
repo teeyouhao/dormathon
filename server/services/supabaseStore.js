@@ -3,7 +3,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const dataDir = path.join(__dirname, '..', 'data-store')
+const dataDir = process.env.VERCEL ? path.join('/tmp', 'data-store') : path.join(__dirname, '..', 'data-store')
 const localReelsFile = path.join(dataDir, 'reels.json')
 
 function ensureDataDir() {

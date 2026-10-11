@@ -6,7 +6,7 @@ import { getInstagramConfig } from '../services/instagramScraper.js'
 
 const router = Router()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const settingsFile = path.join(__dirname, '..', 'settings.json')
+const settingsFile = process.env.VERCEL ? path.join('/tmp', 'settings.json') : path.join(__dirname, '..', 'settings.json')
 
 function readSettings() {
   try {
